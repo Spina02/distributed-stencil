@@ -1,0 +1,24 @@
+  
+#SBATCH --nodes=[NNN]
+#SBATCH --cpus-per-task=[nr_of_omp_threads]
+#SBATCH --ntasks-per-node=[nr_of_mpi_tasks_per_node]
+#SBATCH --mem=0
+#SBATCH --partition dcgp_usr_prod
+#SBATCH -A uTS25_Tornator_0
+#SBATCH -t [00:30:00]
+#SBATCH --job-name=[your_choice]
+##SBATCH --exclusive
+
+EXEC=[your_executable]
+
+# =======================================================
+
+module load gcc/12.2.0
+module load openmpi/4.1.6--gcc--12.2.0
+
+
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export OMP_PLACES=[your_choice]
+export OMP_PROC_BIND=[your_choice]
+
+mpirun -np ${SLURM_NTASKS} ${EXEC} [your_arguments] > out   # rename the output file at your convenience
