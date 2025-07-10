@@ -169,13 +169,11 @@ inline int update_plane (
 
 
 
-inline int get_total_energy( plane_t *plane,
-                             double  *energy )
-/*
- * NOTE: this routine a good candiadate for openmp
- *       parallelization
- */
-{
+inline int get_total_energy( plane_t *plane, double  *energy ) {
+    /*
+    * NOTE: this routine a good candiadate for openmp
+    *                   parallelization
+    */
 
     const int register xsize = plane->size[_x_];
     const int register ysize = plane->size[_y_];
