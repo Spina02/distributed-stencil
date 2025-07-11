@@ -1,6 +1,7 @@
 #include "stencil_parallel.h"
 
 int verbose = 0;
+int seed = 0; // default is random itself
 
 //? ---------------------------------------------------------------
 //?                          Main function 
@@ -356,7 +357,7 @@ int main(int argc, char **argv) {
 
 uint simple_factorization(uint, int*, uint**);
 
-int initialize_sources(int, int, MPI_Comm  *, uint[2], int, int*, vec2_t**);
+int initialize_sources(int, int, MPI_Comm  *, uint[2], int, int*, vec2_t**, vec2_t, vec2_t);
 
 int memory_allocate (const int*, vec2_t, buffers_t*, plane_t*);
 
@@ -400,18 +401,21 @@ int initialize (
 			// manage the situation
 	}
 
-	planes[OLD].size[0] = planes[OLD].size[0] = 0;
-	planes[NEW].size[0] = planes[NEW].size[0] = 0;
+	planes[OLD].size[0] = planes[OLD].size[1] = 0;
+	planes[NEW].size[0] = planes[NEW].size[1] = 0;
   
   	for ( int i = 0; i < 4; i++ )
     	neighbours[i] = MPI_PROC_NULL;
 
+
+	// set random seed according to time
+	seed = time(NULL);
 	
 	//? ··················· process the commadn line ·······················
 	
 	while ( 1 ) {
 		int opt;
-		while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:")) != -1) {
+		while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:s:")) != -1) {
 			switch( opt ) {
 				case 'x': 
 					(*S)[_x_] = (uint)atoi(optarg);
@@ -444,7 +448,10 @@ int initialize (
 				case 'v': 
 					verbose = atoi(optarg);
 					break;
-					
+
+				case 's':
+					seed = atoi(optarg);
+					break;
 				case 'h':
 					if ( Me == 0 )
 						printf( "\nvalid options are ( values btw [] are the default values ):\n"
@@ -671,7 +678,7 @@ int initialize (
 	}
 		
 	//? ··················· allocae the heat sources ······················
-	ret = initialize_sources(Me, Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local);
+	ret = initialize_sources(Me, Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local, *S, *N);
 
 	if (ret != 0) {
 		printf("Error: failed to initialize the sources\n");
@@ -732,45 +739,98 @@ uint simple_factorization( uint Ntasks, int *Nfactors, uint **factors ) {
 	return 0;
 }
 
-
-int initialize_sources( 
-			int       Me,               // the rank of the calling process
-			int       Ntasks,           // the total number of MPI ranks
-			MPI_Comm *Comm,             // MPI communicator
-			vec2_t    mysize,  			// size of the local task
-			int       Nsources, 		// number of heat sources
-			int      *Nsources_local, 	// number of heat sources on the local task
-			vec2_t  **Sources        	// coordinates of the heat sources on the local task
-		) {
-
-	srand48(42 + Me);
-	int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
-  
-	if ( Me == 0 ) {
-		// always call lrand48 to keep the RNG state advancing consistently
-		for ( int i = 0; i < Nsources; i++ )
-			tasks_with_sources[i] = (int)lrand48() % Ntasks;
-	}
-  
-  	MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
-
-	int nlocal = 0;
-	for ( int i = 0; i < Nsources; i++ )
-		nlocal += (tasks_with_sources[i] == Me);
-	*Nsources_local = nlocal;
-  
-	if ( nlocal > 0 ) {
-		vec2_t * restrict helper = (vec2_t*)malloc( nlocal * sizeof(vec2_t) );      
-		for ( int s = 0; s < nlocal; s++ ) {
-			helper[s][_x_] = 1 + lrand48() % mysize[_x_];
-			helper[s][_y_] = 1 + lrand48() % mysize[_y_];
-		}
-      	*Sources = helper;
+int initialize_sources(
+    int       Me,
+    int       Ntasks,
+    MPI_Comm *Comm,
+    vec2_t    mysize,
+    int       Nsources,
+    int      *Nsources_local,
+    vec2_t  **Sources_local,
+    vec2_t    S,
+    vec2_t    N
+) {
+    int *global_sources_idx = (int*)malloc(Nsources * sizeof(int));
+    if (global_sources_idx == NULL) {
+        perror("Failed to allocate global_sources_idx");
+        return 1;
     }
-  
-  	free( tasks_with_sources );
 
-  	return 0;
+	//? - - - - - - - Generate the global sources - - - - - - - - - 
+	// I decided to opt for this approach to ensure reproducibility
+    if (Me == 0) {
+        srand48(42); // Fixed seed for reproducibility
+        for (int i = 0; i < Nsources; i++) {
+            // Generate global coordinates (gx, gy) in the range [0, S-1]
+            uint gx = lrand48() % S[_x_];
+            uint gy = lrand48() % S[_y_];
+            
+            // Calculate 1D index based on 0
+            global_sources_idx[i] = gy * S[_x_] + gx;
+        }
+    }
+
+	//? - - - - - - - Broadcast the global sources - - - - - - - - - 
+    MPI_Bcast(global_sources_idx, Nsources, MPI_INT, 0, *Comm);
+
+	//? - - - - - - - Determine the local sources - - - - - - - - - 
+    int my_grid_x = Me % N[_x_];
+    int my_grid_y = Me / N[_x_];
+    
+    int global_offset_x = 0;
+    for (int i = 0; i < my_grid_x; i++) {
+        global_offset_x += S[_x_] / N[_x_] + (i < S[_x_] % N[_x_]);
+    }
+    int global_offset_y = 0;
+    for (int j = 0; j < my_grid_y; j++) {
+        global_offset_y += S[_y_] / N[_y_] + (j < S[_y_] % N[_y_]);
+    }
+
+    int nlocal = 0;
+    for (int i = 0; i < Nsources; i++) {
+        int g_idx = global_sources_idx[i];
+        // Recover the global coordinates (base-0) from the index
+        int gx = g_idx % S[_x_];
+        int gy = g_idx / S[_x_];
+
+        if (gx >= global_offset_x && gx < global_offset_x + mysize[_x_] &&
+            gy >= global_offset_y && gy < global_offset_y + mysize[_y_]) {
+            nlocal++;
+        }
+    }
+    *Nsources_local = nlocal;
+
+    if (nlocal > 0) {
+        *Sources_local = (vec2_t*)malloc(nlocal * sizeof(vec2_t));
+        if (*Sources_local == NULL) {
+            perror("Failed to allocate memory for local sources");
+            free(global_sources_idx);
+            return 1;
+        }
+
+        int current_local_source = 0;
+        for (int i = 0; i < Nsources; i++) {
+            int g_idx = global_sources_idx[i];
+            int gx = g_idx % S[_x_];
+            int gy = g_idx / S[_x_];
+
+            if (gx >= global_offset_x && gx < global_offset_x + mysize[_x_] &&
+                gy >= global_offset_y && gy < global_offset_y + mysize[_y_]) {
+                
+                // Convert from global (base-0) to local (base-1 for the framed grid)
+                (*Sources_local)[current_local_source][_x_] = gx - global_offset_x + 1;
+                (*Sources_local)[current_local_source][_y_] = gy - global_offset_y + 1;
+                current_local_source++;
+            }
+        }
+    } else {
+		// if there are no local sources,
+		// set the pointer to NULL
+        *Sources_local = NULL; 
+    }
+
+    free(global_sources_idx);
+    return 0;
 }
 
 int memory_allocate ( 
@@ -780,40 +840,20 @@ int memory_allocate (
 			plane_t   *planes_ptr   // plane data
 		) {
     /*
-	here you allocate the memory buffers that you need to
-	(i)  hold the results of your computation
-	(ii) communicate with your neighbours
-
-	The memory layout that I propose to you is as follows:
-
-	(i) --- calculations
-	you need 2 memory regions: the "OLD" one that contains the
-	results for the step (i-1)th, and the "NEW" one that will contain
-	the updated results from the step ith.
-
-	Then, the "NEW" will be treated as "OLD" and viceversa.
-
-	These two memory regions are indexed by *planes_ptr:
-
-	planes_ptr[0] ==> the "OLD" region
-	plames_ptr[1] ==> the "NEW" region
-
-
-	(ii) --- communications
-
-	you may need two buffers (one for sending and one for receiving)
-	for each one of your neighnours, that are at most 4:
-	north, south, east amd west.      
-
-	To them you need to communicate at most mysizex or mysizey double data.
-
-	These buffers are indexed by the buffer_ptr pointer so that
-
-	(*buffers_ptr)[SEND][ {NORTH,...,WEST} ] = .. some memory regions
-	(*buffers_ptr)[RECV][ {NORTH,...,WEST} ] = .. some memory regions
-	
-	--->> Of course you can change this layout as you prefer
-      
+     * This function allocates the memory buffers required for both computation 
+	 * and communication in the stencil parallel application.
+	 *
+     *
+     * For computation, it allocates two memory regions: one for the "OLD" plane (previous step) 
+	 * and one for the "NEW" plane (to store updated results for the current step). 
+	 *
+	 * These are accessed via the planes_ptr array:
+     *   planes_ptr[OLD] refers to the "OLD" region,
+     *   planes_ptr[NEW] refers to the "NEW" region.
+     *
+	 *
+     * For communication, it allocates send and receive buffers for each neighbor (if any)
+	 * Each buffer can hold up to mysizex or mysizey double values, depending on the direction.
      */
 
   	if (planes_ptr == NULL ) {
