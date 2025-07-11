@@ -141,8 +141,8 @@ inline int update_plane (const int periodic, const int size[2], const double *ol
         {
             for ( int i = 1; i <= xsize; i++ )
                 {
-                    new[ i ] = new[ IDX(i, ysize) ];
-                    new[ IDX(i, ysize+1) ] = new[ i ];
+                    new[ IDX(i, 0) ] = new[ IDX(i, ysize) ];
+                    new[ IDX(i, ysize+1) ] = new[ IDX(i, 1) ];
                 }
             for ( int j = 1; j <= ysize; j++ )
                 {

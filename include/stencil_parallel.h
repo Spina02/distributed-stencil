@@ -23,6 +23,13 @@
 #define _x_ 0
 #define _y_ 1
 
+// tags for MPI communication
+#define TAG_N 0
+#define TAG_S 1
+#define TAG_E 2
+#define TAG_W 3
+
+
 typedef unsigned int uint;
 
 typedef uint    vec2_t[2];
@@ -134,28 +141,32 @@ inline int update_plane (
                     //       "infinite sink" of heat
                     
                     // five-points stencil formula
-                    //
-                    // HINT : check the serial version for some optimization
-                    //
 
                     result = old[ IDX(i,j) ] * alpha + (old[IDX(i-1, j)] + old[IDX(i+1, j)] + old[IDX(i, j-1)] + old[IDX(i, j+1)]) * constant;
 
                     new[ IDX(i,j) ] = result;
                 }
 
-        if ( periodic )
-            {
-                if ( N[_x_] == 1 )
-                    {
-                        // propagate the boundaries as needed
-                        // check the serial version
+            if ( periodic ) {
+                // if there is only a column of tasks, the periodicity on the X axis is local
+                if ( N[_x_] == 1 ) {
+                    // copy the values of the first column to the right ghost column (xsize+1)
+                    // and the values of the last column to the left ghost column (0)
+                    for ( int j = 1; j <= ysize; j++ ) {
+                        new[ IDX( 0, j) ]       = new[ IDX(xsize, j) ];
+                        new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
                     }
-    
-                if ( N[_y_] == 1 ) 
-                    {
-                        // propagate the boundaries as needed
-                        // check the serial version
+                }
+        
+                // if there is only a row of tasks, the periodicity on the Y axis is local
+                if ( N[_y_] == 1 ) {
+                    // copy the values of the first row to the bottom ghost row (ysize+1)
+                    // and the values of the last row to the top ghost row (0)
+                    for ( int i = 1; i <= xsize; i++ ) {
+                        new[ IDX( i, 0 ) ]       = new[ IDX(i, ysize) ];
+                        new[ IDX( i, ysize+1) ] = new[ IDX(i, 1) ];
                     }
+                }
             }
     
     #undef IDX

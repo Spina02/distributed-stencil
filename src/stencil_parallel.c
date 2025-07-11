@@ -101,20 +101,20 @@ int main(int argc, char **argv) {
 		//         --> can you overlap communication and compution in this way?
 
 		if (neighbours[EAST] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][EAST], ysize, MPI_DOUBLE, neighbours[EAST], 0, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][EAST], ysize, MPI_DOUBLE, neighbours[EAST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Isend(buffers[SEND][EAST], ysize, MPI_DOUBLE, neighbours[EAST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][EAST], ysize, MPI_DOUBLE, neighbours[EAST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
 		}
 		if (neighbours[WEST] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][WEST], ysize, MPI_DOUBLE, neighbours[WEST], 0, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][WEST], ysize, MPI_DOUBLE, neighbours[WEST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Isend(buffers[SEND][WEST], ysize, MPI_DOUBLE, neighbours[WEST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][WEST], ysize, MPI_DOUBLE, neighbours[WEST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
 		}
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Isend(buffers[SEND][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
 		}
 		if (neighbours[SOUTH] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Isend(buffers[SEND][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
 		}
 		
 		MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
@@ -580,29 +580,30 @@ int initialize (
 	int Y = Me / Grid[_x_];
 
 	//? ···················· find my neighbours ······················
-	if ( Grid[_x_] > 1 ) {  
-		if ( *periodic ) {       
-			// if periodic boundaries are applied, we can use the modulo operation to find the neighbours
+	if ( *periodic ) {
+		// Horizontal neighbours
+		if (Grid[_x_] > 1 || *periodic) {
 			neighbours[EAST]  = Y*Grid[_x_] + (X + 1 ) % Grid[_x_];
 			neighbours[WEST]  = Y*Grid[_x_] + (X - 1 + Grid[_x_]) % Grid[_x_];
-		} else {
-			// if periodic boundaries are not applied, we need to check if the neighbour is within the domain
-			// else, we set the neighbour to MPI_PROC_NULL
+		}
+		// Vertical neighbours
+		if (Grid[_y_] > 1 || *periodic) {
+			neighbours[NORTH] = ((Y - 1 + Grid[_y_]) % Grid[_y_]) * Grid[_x_] + X;
+			neighbours[SOUTH] = ((Y + 1) % Grid[_y_]) * Grid[_x_] + X;
+		}
+	} else {
+		// Horizontal neighbours
+		if ( Grid[_x_] > 1 ) {  
 			neighbours[EAST]  = ( X < Grid[_x_]-1 ? Me+1 : MPI_PROC_NULL );
 			neighbours[WEST]  = ( X > 0 ? Me-1 : MPI_PROC_NULL ); 
-		}  
-	}
-
-	if ( Grid[_y_] > 1 ) {
-		// same logic for the y direction
-		if ( *periodic ) {
-			neighbours[NORTH] = (Ntasks + Me - Grid[_x_]) % Ntasks;
-			neighbours[SOUTH] = (Ntasks + Me + Grid[_x_]) % Ntasks;
-		} else {    
+		}
+		// Vertical neighbours
+		if ( Grid[_y_] > 1 ) {
 			neighbours[NORTH] = ( Y > 0 ? Me - Grid[_x_]: MPI_PROC_NULL );
 			neighbours[SOUTH] = ( Y < Grid[_y_]-1 ? Me + Grid[_x_] : MPI_PROC_NULL );
 		}
 	}
+
 
 	//? ··················· the size of my patch ···················
 
