@@ -10,32 +10,31 @@
 
 #include "stencil_template_parallel.h"
 
-
-
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
 
-int main(int argc, char **argv) {
-	MPI_Comm myCOMM_WORLD;       // MPI communicator
-	int  Rank, Ntasks;
-	uint neighbours[4];       	// 0: North, 1: South, 2: East, 3: West
+int main(int argc, char **argv)
+{
+  MPI_Comm myCOMM_WORLD;
+  int  Rank, Ntasks;
+  uint neighbours[4];
 
-	int  Niterations;          	// number of iterations
-	int  periodic;             	// periodic boundary condition
-	vec2_t S, N;                  // size of the plane and size of MPI tasks
-	
-	int      Nsources;            // number of heat sources
-	int      Nsources_local;      // number of heat sources on the local task
-	vec2_t  *Sources_local;       // coordinates of the heat sources on the local task
-	double   energy_per_source;   // energy per source
+  int  Niterations;
+  int  periodic;
+  vec2_t S, N;
+  
+  int      Nsources;
+  int      Nsources_local;
+  vec2_t  *Sources_local;
+  double   energy_per_source;
 
-	plane_t   planes[2];  
-	buffers_t buffers[2];
+  plane_t   planes[2];  
+  buffers_t buffers[2];
   
-  	int output_energy_stat_perstep;
+  int output_energy_stat_perstep;
   
-	/* initialize MPI envrionment */
-	{
+  /* initialize MPI envrionment */
+  {
     int level_obtained;
     
     // NOTE: change MPI_FUNNELED if appropriate

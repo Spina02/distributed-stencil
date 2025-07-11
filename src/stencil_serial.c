@@ -5,7 +5,7 @@
  *
  */
  
- #include "stencil_template_serial.h"
+ #include "stencil_serial.h"
  
  int dump ( const double *, const uint [2], const char *, double *, double * );
 
@@ -53,15 +53,15 @@ int main(int argc, char **argv) {
 		update_plane(periodic, S, planes[current], planes[!current] );
 
 		// //! ------------------------------ DEBUG ------------------------------
-		// /* Print the surface at each step */
-		// printf("Surface at step %d:\n", iter);
-		// for (int j = 1; j <= S[1]; j++) {
-		// 	for (int i = 1; i <= S[0]; i++) {
-		// 		printf("%8.4f ", planes[!current][j*(S[0]+2) + i]);
-		// 	}
-		// 	printf("\n");
-		// }
-		// printf("\n");
+		/* Print the surface at each step */
+		printf("Surface at step %d:\n", iter);
+		for (int j = 1; j <= S[1]; j++) {
+			for (int i = 1; i <= S[0]; i++) {
+				printf("%8.4f ", planes[!current][j*(S[0]+2) + i]);
+			}
+			printf("\n");
+		}
+		printf("\n");
 		// //! --------------------------------------------------------------------
 
 		if ( output_energy_at_steps ) {
@@ -147,7 +147,7 @@ int initialize (
 	S[_x_]             		= 1000;
 	S[_y_]             		= 1000;
    	*periodic          		= 0;
-	*Nsources          		= 1;
+	*Nsources          		= 4;
 	*Niterations       		= 99;
 	*output_energy_at_steps = 0;
 	*energy_per_source 		= 1.0;
@@ -186,7 +186,7 @@ int initialize (
 	  	case 'h': printf( "valid options are ( values btw [] are the default values ):\n"
 			"-x    x size of the plate [1000]\n"
 			"-y    y size of the plate [1000]\n"
-			"-e    how many energy sources on the plate [1]\n"
+			"-e    how many energy sources on the plate [4]\n"
 			"-E    how many energy sources on the plate [1.0]\n"
 			"-f    the frequency of energy injection [0.0]\n"
 			"-n    how many iterations [100]\n"
@@ -214,17 +214,12 @@ int initialize (
 		return 1;
 	}
 
-	if ( freq <= 0 )
+	if ( freq == 0 ) {
 		*injection_frequency = 1;
-	else if ( freq <= 0 ) {
-		printf("Error: injection_frequency must be positive\n");
-		return 1;
-	}
-	else
-		{
+	} else {
 		freq = (freq > 1.0 ? 1.0 : freq );
 		*injection_frequency = freq * *Niterations;
-		}
+	}
 	
 	if ( S[_x_] <= 0 || S[_y_] <= 0 ) {
 		printf("Error: x and y must be positive\n");
@@ -303,6 +298,7 @@ int initialize_sources(
 	*/
 	{
   	*Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
+	srand48(42);
 	for ( int s = 0; s < Nsources; s++ ) {
 		(*Sources)[s*2] 	= 1+ lrand48() % size[_x_];
 		(*Sources)[s*2+1] 	= 1+ lrand48() % size[_y_];

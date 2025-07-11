@@ -1,658 +1,937 @@
-/*
+#include "stencil_parallel.h"
 
-/*
- *
- *  mysizex   :   local x-extendion of your patch
- *  mysizey   :   local y-extension of your patch
- *
- */
+int verbose = 0;
 
+//? ---------------------------------------------------------------
+//?                          Main function 
+//? ---------------------------------------------------------------
 
-#include "stencil_template_parallel.h"
+int main(int argc, char **argv) {
 
+	MPI_Comm myCOMM_WORLD;      // MPI communicator
+	int  Rank, Ntasks;			// Rank: the rank of the calling process, Ntasks: the total number of MPI ranks
 
+	uint neighbours[4];       	// 0: North, 1: South, 2: East, 3: West
+	int  Niterations;          	// number of iterations
+	int  periodic;             	// periodic boundary condition
+	vec2_t S, N;                // size of the plane and size of MPI tasks
 
-// ------------------------------------------------------------------
-// ------------------------------------------------------------------
+	int      Nsources;          // number of heat sources
+	int      Nsources_local;    // number of heat sources on the local task
+	vec2_t  *Sources_local;     // coordinates of the heat sources on the local task
+	double   energy_per_source; // energy per source
 
-int main(int argc, char **argv)
-{
-  MPI_Comm myCOMM_WORLD;
-  int  Rank, Ntasks;
-  uint neighbours[4];
-
-  int  Niterations;
-  int  periodic;
-  vec2_t S, N;
+	plane_t   planes[2];   		// two planes for the two iterations (current and next)
+	buffers_t buffers[2]; 		// two buffers for the two iterations (send and receive)
   
-  int      Nsources;
-  int      Nsources_local;
-  vec2_t  *Sources_local;
-  double   energy_per_source;
-
-  plane_t   planes[2];  
-  buffers_t buffers[2];
-  
-  int output_energy_stat_perstep;
-  
-  /* initialize MPI envrionment */
-  {
-    int level_obtained;
-    
-    // NOTE: change MPI_FUNNELED if appropriate
-    //
-    MPI_Init_thread( &argc, &argv, MPI_THREAD_FUNNELED, &level_obtained );
-    if ( level_obtained < MPI_THREAD_FUNNELED ) {
-      printf("MPI_thread level obtained is %d instead of %d\n",
-	     level_obtained, MPI_THREAD_FUNNELED );
-      MPI_Finalize();
-      exit(1); }
-    
-    MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &Ntasks);
-    MPI_Comm_dup (MPI_COMM_WORLD, &myCOMM_WORLD);
-  }
-  
-  
-  /* argument checking and setting */
-  int ret = initialize ( &myCOMM_WORLD, Rank, Ntasks, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,
-			 neighbours, &Niterations,
-			 &Nsources, &Nsources_local, &Sources_local, &energy_per_source,
-			 &planes[0], &buffers[0] );
-
-  if ( ret )
-    {
-      printf("task %d is opting out with termination code %d\n",
-	     Rank, ret );
-      
-      MPI_Finalize();
-      return 0;
-    }
-  
-  
-  int current = OLD;
-  double t1 = MPI_Wtime();   /* take wall-clock time */
-  
-  for (int iter = 0; iter < Niterations; ++iter)
-    
-    {
-      
-      MPI_Request reqs[8];
-      
-      /* new energy from sources */
-      inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
-
-
-      /* -------------------------------------- */
-
-      // [A] fill the buffers, and/or make the buffers' pointers pointing to the correct position
-
-      // [B] perfoem the halo communications
-      //     (1) use Send / Recv
-      //     (2) use Isend / Irecv
-      //         --> can you overlap communication and compution in this way?
-      
-      // [C] copy the haloes data
-
-      /* --------------------------------------  */
-      /* update grid points */
-      
-      update_plane( periodic, N, &planes[current], &planes[!current] );
-
-      /* output if needed */
-      if ( output_energy_stat_perstep )
-	output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+	int output_energy_stat_perstep; // whether to output energy statistics per step
 	
-      /* swap plane indexes for the new iteration */
-      current = !current;
-      
-    }
-  
-  t1 = MPI_Wtime() - t1;
-
-  output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
-  
-  memory_release( buffers, planes );
-  
-  
-  MPI_Finalize();
-  return 0;
-}
-
-
-/* ==========================================================================
-   =                                                                        =
-   =   routines called within the integration loop                          =
-   ========================================================================== */
-
-
-
-
-
-/* ==========================================================================
-   =                                                                        =
-   =   initialization                                                       =
-   ========================================================================== */
-
-
-uint simple_factorization( uint, int *, uint ** );
-
-int initialize_sources( int       ,
-			int       ,
-			MPI_Comm  *,
-			uint      [2],
-			int       ,
-			int      *,
-			vec2_t  ** );
-
-
-int memory_allocate ( const int       *,
-		      const vec2_t     ,
-		            buffers_t *,
-		            plane_t   * );
-		      
-
-int initialize ( MPI_Comm *Comm,
-		 int      Me,                  // the rank of the calling process
-		 int      Ntasks,              // the total number of MPI ranks
-		 int      argc,                // the argc from command line
-		 char   **argv,                // the argv from command line
-		 vec2_t  *S,                   // the size of the plane
-		 vec2_t  *N,                   // two-uint array defining the MPI tasks' grid
-		 int     *periodic,            // periodic-boundary tag
-		 int     *output_energy_stat,
-		 int     *neighbours,          // four-int array that gives back the neighbours of the calling task
-		 int     *Niterations,         // how many iterations
-		 int     *Nsources,            // how many heat sources
-		 int     *Nsources_local,
-		 vec2_t **Sources_local,
-		 double  *energy_per_source,   // how much heat per source
-		 plane_t *planes,
-		 buffers_t *buffers
-		 )
-{
-  int halt = 0;
-  int ret;
-  int verbose = 0;
-  
-  // ··································································
-  // set deffault values
-
-  (*S)[_x_]         = 10000;
-  (*S)[_y_]         = 10000;
-  *periodic         = 0;
-  *Nsources         = 4;
-  *Nsources_local   = 0;
-  *Sources_local    = NULL;
-  *Niterations      = 1000;
-  *energy_per_source = 1.0;
-
-  if ( planes == NULL ) {
-    // manage the situation
-  }
-
-  planes[OLD].size[0] = planes[OLD].size[0] = 0;
-  planes[NEW].size[0] = planes[NEW].size[0] = 0;
-  
-  for ( int i = 0; i < 4; i++ )
-    neighbours[i] = MPI_PROC_NULL;
-
-  for ( int b = 0; b < 2; b++ )
-    for ( int d = 0; d < 4; d++ )
-      buffers[b][d] = NULL;
-  
-  // ··································································
-  // process the commadn line
-  // 
-  while ( 1 )
-  {
-    int opt;
-    while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:")) != -1)
-      {
-	switch( opt )
-	  {
-	  case 'x': (*S)[_x_] = (uint)atoi(optarg);
-	    break;
-
-	  case 'y': (*S)[_y_] = (uint)atoi(optarg);
-	    break;
-
-	  case 'e': *Nsources = atoi(optarg);
-	    break;
-
-	  case 'E': *energy_per_source = atof(optarg);
-	    break;
-
-	  case 'n': *Niterations = atoi(optarg);
-	    break;
-
-	  case 'o': *output_energy_stat = (atoi(optarg) > 0);
-	    break;
-
-	  case 'p': *periodic = (atoi(optarg) > 0);
-	    break;
-
-	  case 'v': verbose = atoi(optarg);
-	    break;
-
-	  case 'h': {
-	    if ( Me == 0 )
-	      printf( "\nvalid options are ( values btw [] are the default values ):\n"
-		      "-x    x size of the plate [10000]\n"
-		      "-y    y size of the plate [10000]\n"
-		      "-e    how many energy sources on the plate [4]\n"
-		      "-E    how many energy sources on the plate [1.0]\n"
-		      "-n    how many iterations [1000]\n"
-		      "-p    whether periodic boundaries applies  [0 = false]\n\n"
-		      );
-	    halt = 1; }
-	    break;
-	    
-	    
-	  case ':': printf( "option -%c requires an argument\n", optopt);
-	    break;
-	    
-	  case '?': printf(" -------- help unavailable ----------\n");
-	    break;
-	  }
-      }
-
-    if ( opt == -1 )
-      break;
-  }
-
-  if ( halt )
-    return 1;
-  
-  
-  // ··································································
-  /*
-   * here we should check for all the parms being meaningful
-   *
-   */
-
-  // ...
-
-  
-  // ··································································
-  /*
-   * find a suitable domain decomposition
-   * very simple algorithm, you may want to
-   * substitute it with a better one
-   *
-   * the plane Sx x Sy will be solved with a grid
-   * of Nx x Ny MPI tasks
-   */
-
-  vec2_t Grid;
-  double formfactor = ((*S)[_x_] >= (*S)[_y_] ? (double)(*S)[_x_]/(*S)[_y_] : (double)(*S)[_y_]/(*S)[_x_] );
-  int    dimensions = 2 - (Ntasks <= ((int)formfactor+1) );
-
-  
-  if ( dimensions == 1 )
-    {
-      if ( (*S)[_x_] >= (*S)[_y_] )
-	Grid[_x_] = Ntasks, Grid[_y_] = 1;
-      else
-	Grid[_x_] = 1, Grid[_y_] = Ntasks;
-    }
-  else
-    {
-      int   Nf;
-      uint *factors;
-      uint  first = 1;
-      ret = simple_factorization( Ntasks, &Nf, &factors );
-      
-      for ( int i = 0; (i < Nf) && ((Ntasks/first)/first > formfactor); i++ )
-	first *= factors[i];
-
-      if ( (*S)[_x_] > (*S)[_y_] )
-	Grid[_x_] = Ntasks/first, Grid[_y_] = first;
-      else
-	Grid[_x_] = first, Grid[_y_] = Ntasks/first;
-    }
-
-  (*N)[_x_] = Grid[_x_];
-  (*N)[_y_] = Grid[_y_];
-  
-
-  // ··································································
-  // my cooridnates in the grid of processors
-  //
-  int X = Me % Grid[_x_];
-  int Y = Me / Grid[_x_];
-
-  // ··································································
-  // find my neighbours
-  //
-
-  if ( Grid[_x_] > 1 )
-    {  
-      if ( *periodic ) {       
-	neighbours[EAST]  = Y*Grid[_x_] + (Me + 1 ) % Grid[_x_];
-	neighbours[WEST]  = (X%Grid[_x_] > 0 ? Me-1 : (Y+1)*Grid[_x_]-1); }
-      
-      else {
-	neighbours[EAST]  = ( X < Grid[_x_]-1 ? Me+1 : MPI_PROC_NULL );
-	neighbours[WEST]  = ( X > 0 ? (Me-1)%Ntasks : MPI_PROC_NULL ); }  
-    }
-
-  if ( Grid[_y_] > 1 )
-    {
-      if ( *periodic ) {      
-	neighbours[NORTH] = (Ntasks + Me - Grid[_x_]) % Ntasks;
-	neighbours[SOUTH] = (Ntasks + Me + Grid[_x_]) % Ntasks; }
-
-      else {    
-	neighbours[NORTH] = ( Y > 0 ? Me - Grid[_x_]: MPI_PROC_NULL );
-	neighbours[SOUTH] = ( Y < Grid[_y_]-1 ? Me + Grid[_x_] : MPI_PROC_NULL ); }
-    }
-
-  // ··································································
-  // the size of my patch
-  //
-
-  /*
-   * every MPI task determines the size sx x sy of its own domain
-   * REMIND: the computational domain will be embedded into a frame
-   *         that is (sx+2) x (sy+2)
-   *         the outern frame will be used for halo communication or
-   */
-  
-  vec2_t mysize;
-  uint s = (*S)[_x_] / Grid[_x_];
-  uint r = (*S)[_x_] % Grid[_x_];
-  mysize[_x_] = s + (X < r);
-  s = (*S)[_y_] / Grid[_y_];
-  r = (*S)[_y_] % Grid[_y_];
-  mysize[_y_] = s + (Y < r);
-
-  planes[OLD].size[0] = mysize[0];
-  planes[OLD].size[1] = mysize[1];
-  planes[NEW].size[0] = mysize[0];
-  planes[NEW].size[1] = mysize[1];
-  
-
-  if ( verbose > 0 )
-    {
-      if ( Me == 0 ) {
-	printf("Tasks are decomposed in a grid %d x %d\n\n",
-		 Grid[_x_], Grid[_y_] );
-	fflush(stdout);
-      }
-
-      MPI_Barrier(*Comm);
-      
-      for ( int t = 0; t < Ntasks; t++ )
+	//? ························ initialize MPI envrionment ························
 	{
-	  if ( t == Me )
-	    {
-	      printf("Task %4d :: "
-		     "\tgrid coordinates : %3d, %3d\n"
-		     "\tneighbours: N %4d    E %4d    S %4d    W %4d\n",
-		     Me, X, Y,
-		     neighbours[NORTH], neighbours[EAST],
-		     neighbours[SOUTH], neighbours[WEST] );
-	      fflush(stdout);
-	    }
-
-	  MPI_Barrier(*Comm);
+		int level_obtained;
+		
+		// NOTE: change MPI_FUNNELED if appropriate
+		//
+		MPI_Init_thread( &argc, &argv, MPI_THREAD_FUNNELED, &level_obtained );
+		if ( level_obtained < MPI_THREAD_FUNNELED ) {
+			printf("MPI_thread level obtained is %d instead of %d\n", level_obtained, MPI_THREAD_FUNNELED );
+			MPI_Finalize();
+			exit(1); }
+		
+		MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
+		MPI_Comm_size(MPI_COMM_WORLD, &Ntasks);
+		MPI_Comm_dup (MPI_COMM_WORLD, &myCOMM_WORLD);
 	}
+  
+	//? ························ argument checking and setting ························
+
+
+	int ret = initialize (&myCOMM_WORLD, Rank, Ntasks, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,neighbours,
+					  &Niterations, &Nsources, &Nsources_local, &Sources_local, &energy_per_source, planes, buffers);
+
+	if ( ret ) {
+		printf("task %d is opting out with termination code %d\n", Rank, ret );
+		
+		MPI_Finalize();
+		return 0;
+    }
+
+	//? -------------------------------- Core loop --------------------------------
+	
+	int current = OLD;
+	double t1 = MPI_Wtime();   /* take wall-clock time */
+	
+	for (int iter = 0; iter < Niterations; ++iter) {
+      
+		MPI_Request reqs[8];
+		int nreqs = 0;
+		
+		//? - - - - - - - - - - inject energy from new sources - - - - - - - - - - -
+
+		inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
+
+		//?- - - - - - - - - - - - - prepare the buffers - - - - - - - - - - - - - -
+
+		int ysize = planes[current].size[_y_];
+		int xsize = planes[current].size[_x_];
+
+		int yframe = ysize + 2;
+		int xframe = xsize + 2;
+
+		// Checking if buffers are allocated
+		if (buffers[SEND][WEST] != NULL && buffers[SEND][EAST] != NULL) {
+			for (int i = 0; i < ysize; i++) {
+				// WEST: first effective column (excluding frame)
+				buffers[SEND][WEST][i] = planes[current].data[(i + 1) * xframe + 1];
+				// EAST: last effective column (excluding frame)
+				buffers[SEND][EAST][i] = planes[current].data[(i + 1) * xframe + xsize];
+			}
+		}
+
+		buffers[SEND][NORTH] = &(planes[current].data[xframe + 1]); 		// the first effective row
+		buffers[SEND][SOUTH] = &(planes[current].data[ysize * xframe + 1]); // the last effective row
+		buffers[RECV][NORTH] = &(planes[current].data[1]);
+		buffers[RECV][SOUTH] = &(planes[current].data[(ysize + 1) * xframe + 1]);
+		
+		//? - - - - - - - - - - - perform the halo communications - - - - - - - - - -
+		
+		//     (1) use Send / Recv
+		//     (2) use Isend / Irecv
+		//         --> can you overlap communication and compution in this way?
+
+		if (neighbours[EAST] != MPI_PROC_NULL) {
+			MPI_Isend(buffers[SEND][EAST], ysize, MPI_DOUBLE, neighbours[EAST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][EAST], ysize, MPI_DOUBLE, neighbours[EAST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+		}
+		if (neighbours[WEST] != MPI_PROC_NULL) {
+			MPI_Isend(buffers[SEND][WEST], ysize, MPI_DOUBLE, neighbours[WEST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][WEST], ysize, MPI_DOUBLE, neighbours[WEST], 0, myCOMM_WORLD, &reqs[nreqs++]);
+		}
+		if (neighbours[NORTH] != MPI_PROC_NULL) {
+			MPI_Isend(buffers[SEND][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][NORTH], xsize, MPI_DOUBLE, neighbours[NORTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+		}
+		if (neighbours[SOUTH] != MPI_PROC_NULL) {
+			MPI_Isend(buffers[SEND][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+			MPI_Irecv(buffers[RECV][SOUTH], xsize, MPI_DOUBLE, neighbours[SOUTH], 0, myCOMM_WORLD, &reqs[nreqs++]);
+		}
+		
+		MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
+		
+		//? - - - - - - - - - - - - - - copy the haloes data - - - - - - - - - - - - - -
+
+		if (neighbours[WEST] != MPI_PROC_NULL) {
+			for (int i = 0; i < ysize; i++) {
+				planes[current].data[(i + 1) * xframe + 0] = buffers[RECV][WEST][i];
+			}
+		}
+		if (neighbours[EAST] != MPI_PROC_NULL) {
+			for (int i = 0; i < ysize; i++) {
+				planes[current].data[(i + 1) * xframe + (xsize + 1)] = buffers[RECV][EAST][i];
+			}
+		}
+
+		//? - - - - - - - - - - - - - - - update grid points - - - - - - - - - - - - - -
+
+		update_plane( periodic, N, &planes[current], &planes[!current] );
+
+
+		//! ------------------------- Print the surface at each step -------------------------
+		//!
+		//! warning:   this is a very slow operation, and should be used only for debugging
+		//!  		               since it looses the parallelization
+		//!
+		//! ----------------------------------------------------------------------------------
+		if (verbose > 1) {
+			// Gather local grid sizes and data to rank 0
+			int p_xsize = planes[!current].size[_x_];
+			int p_ysize = planes[!current].size[_y_];
+			int p_xframe = p_xsize + 2;
+			int local_size = p_xsize * p_ysize;
+
+			// Get the global grid decomposition
+			int Grid_x, Grid_y;
+			MPI_Comm_size(myCOMM_WORLD, &Ntasks);
+			MPI_Comm_rank(myCOMM_WORLD, &Rank);
+			Grid_x = N[_x_];
+			Grid_y = N[_y_];
+
+			// Special case: Ntasks == 1, just print the local grid directly
+			if (Ntasks == 1) {
+				printf("Merged Surface at step %d:\n\n", iter);
+				for (int j = 0; j < p_ysize; j++) {
+					for (int i = 0; i < p_xsize; i++) {
+						printf("%8.4f ", planes[!current].data[(j+1) * p_xframe + (i+1)]);
+					}
+					printf("\n");
+				}
+				printf("\n");
+			} else {
+				// Each rank sends its local grid size and data to rank 0
+				int *all_xsize = NULL, *all_ysize = NULL;
+				int *displs = NULL, *recvcounts = NULL;
+
+				if (Rank == 0) {
+					all_xsize = (int*)malloc(Ntasks * sizeof(int));
+					all_ysize = (int*)malloc(Ntasks * sizeof(int));
+				}
+				int my_sizes[2] = {p_xsize, p_ysize};
+				MPI_Gather(&my_sizes[0], 1, MPI_INT, all_xsize, 1, MPI_INT, 0, myCOMM_WORLD);
+				MPI_Gather(&my_sizes[1], 1, MPI_INT, all_ysize, 1, MPI_INT, 0, myCOMM_WORLD);
+
+				// Gather all local data to rank 0
+				double *localbuf = (double*)malloc(local_size * sizeof(double));
+				for (int j = 0; j < p_ysize; j++)
+					for (int i = 0; i < p_xsize; i++)
+						localbuf[j * p_xsize + i] = planes[!current].data[(j+1) * p_xframe + (i+1)];
+
+				// Compute displacements and receive counts for Gatherv
+				if (Rank == 0) {
+					recvcounts = (int*)malloc(Ntasks * sizeof(int));
+					displs = (int*)malloc(Ntasks * sizeof(int));
+					int offset = 0;
+					for (int r = 0; r < Ntasks; r++) {
+						recvcounts[r] = all_xsize[r] * all_ysize[r];
+						displs[r] = offset;
+						offset += recvcounts[r];
+					}
+				}
+				double *gathered = NULL;
+				if (Rank == 0) {
+					int total = 0;
+					for (int r = 0; r < Ntasks; r++) total += all_xsize[r] * all_ysize[r];
+					gathered = (double*)malloc(total * sizeof(double));
+				}
+				MPI_Gatherv(localbuf, local_size, MPI_DOUBLE,
+				            gathered, recvcounts, displs, MPI_DOUBLE, 0, myCOMM_WORLD);
+				free(localbuf);
+
+				// Print the merged grid at rank 0
+				if (Rank == 0) {
+					// Compute the global grid size
+					int global_x = 0, global_y = 0;
+					for (int gx = 0; gx < Grid_x; gx++) global_x += all_xsize[gx];
+					for (int gy = 0; gy < Grid_y; gy++) global_y += all_ysize[gy * Grid_x];
+
+					// Build a map of where each rank's patch goes
+					int *x_offsets = (int*)malloc(Grid_x * sizeof(int));
+					int *y_offsets = (int*)malloc(Grid_y * sizeof(int));
+					x_offsets[0] = 0;
+					y_offsets[0] = 0;
+					for (int gx = 1; gx < Grid_x; gx++)
+						x_offsets[gx] = x_offsets[gx-1] + all_xsize[gx-1];
+					for (int gy = 1; gy < Grid_y; gy++)
+						y_offsets[gy] = y_offsets[gy-1] + all_ysize[(gy-1)*Grid_x];
+
+					// Allocate the global grid
+					double **global_grid = (double**)malloc(global_y * sizeof(double*));
+					for (int j = 0; j < global_y; j++)
+						global_grid[j] = (double*)malloc(global_x * sizeof(double));
+					// Fill with zeros
+					for (int j = 0; j < global_y; j++)
+						for (int i = 0; i < global_x; i++)
+							global_grid[j][i] = 0.0;
+
+					// Place each rank's patch in the global grid
+					int *patch_idx = (int*)malloc(Ntasks * sizeof(int));
+					for (int r = 0; r < Ntasks; r++) patch_idx[r] = 0;
+					for (int gy = 0; gy < Grid_y; gy++) {
+						for (int gx = 0; gx < Grid_x; gx++) {
+							int r = gy * Grid_x + gx;
+							int px = x_offsets[gx];
+							int py = y_offsets[gy];
+							int xs = all_xsize[r];
+							int ys = all_ysize[r];
+							int base = displs[r];
+							for (int j = 0; j < ys; j++) {
+								for (int i = 0; i < xs; i++) {
+									global_grid[py + j][px + i] = gathered[base + j * xs + i];
+								}
+							}
+						}
+					}
+
+					// Enhanced pretty-printing of the merged surface with improved grid lines and intersections
+					// Now using UTF-8 string literals for box-drawing characters to avoid multi-character constant warnings
+
+					printf("Merged Surface at step %d:\n\n", iter);
+
+					// Precompute vertical separator columns for each region
+					int *vert_seps = (int*)malloc((Grid_x-1) * sizeof(int));
+					int sep_sum = 0;
+					for (int gx = 0; gx < Grid_x-1; gx++) {
+						sep_sum += all_xsize[gx];
+						vert_seps[gx] = sep_sum;
+					}
+
+					// Precompute horizontal separator rows for each region
+					int *horiz_seps = (int*)malloc((Grid_y-1) * sizeof(int));
+					sep_sum = 0;
+					for (int gy = 0; gy < Grid_y-1; gy++) {
+						sep_sum += all_ysize[gy * Grid_x];
+						horiz_seps[gy] = sep_sum;
+					}
+
+					for (int j = 0; j < global_y; j++) {
+						for (int i = 0; i < global_x; i++) {
+							printf("%8.4f", global_grid[j][i]);
+							// Add vertical separator between task regions, aligned
+							for (int s = 0; s < Grid_x-1; s++) {
+								if (i + 1 == vert_seps[s]) {
+									printf(" │");
+									break;
+								}
+							}
+						}
+						printf("\n");
+						// Add horizontal separator between task regions, aligned
+						for (int s = 0; s < Grid_y-1; s++) {
+							if (j + 1 == horiz_seps[s]) {
+								// Print left margin to align with numbers
+								for (int i = 0; i < global_x; i++) {
+									if (i == 0) printf("  ───────");
+									else printf("────────");
+									// printf("──────");
+									// Add intersection or end
+									for (int t = 0; t < Grid_x-1; t++) {
+										if (i + 1 == vert_seps[t]) {
+											printf("┼─");
+											break;
+										}
+									}
+								}
+								printf("\n");
+								break;
+							}
+						}
+					}
+					printf("\n");
+
+					// Clean up
+					for (int j = 0; j < global_y; j++) free(global_grid[j]);
+					free(global_grid);
+					free(x_offsets);
+					free(y_offsets);
+					free(patch_idx);
+					free(all_xsize);
+					free(all_ysize);
+					free(recvcounts);
+					free(displs);
+					free(gathered);
+					free(vert_seps);
+					free(horiz_seps);
+				}
+				MPI_Barrier(myCOMM_WORLD);
+			}
+		}
+		//! -------------------------------- End of printing ---------------------------------
+
+		//? - - - - - - - - - - - - - - output energy statistics - - - - - - - - - - - - - - -
+		if ( output_energy_stat_perstep )
+			output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+	
+		// swap plane indexes for the new iteration
+		current = !current;
       
     }
+  
+	t1 = MPI_Wtime() - t1;
 
-  
-  // ··································································
-  // allocae the needed memory
-  //
-  ret = memory_allocate( plans, ... 
-  
+	if (verbose > 0) printf("Time taken: %f seconds\n", t1);
 
-  // ··································································
-  // allocae the heat sources
-  //
-  ret = initialize_sources( Me, Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local );
-  
-  
-  return 0;  
+	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+	
+	memory_release( buffers, planes, Sources_local );
+	
+	
+	MPI_Finalize();
+	return 0;
 }
 
 
-uint simple_factorization( uint A, int *Nfactors, uint **factors )
-/*
- * rought factorization;
- * assumes that A is small, of the order of <~ 10^5 max,
- * since it represents the number of tasks
- #
- */
-{
-  int N = 0;
-  int f = 2;
-  uint _A_ = A;
+ 
+//? -------------------------------------------------------------------------
+//?                              initialization
+//? -------------------------------------------------------------------------
 
-  while ( f < A )
-    {
-      while( _A_ % f == 0 ) {
-	N++;
-	_A_ /= f; }
+uint simple_factorization(uint, int*, uint**);
 
-      f++;
-    }
+int initialize_sources(int, int, MPI_Comm  *, uint[2], int, int*, vec2_t**);
 
-  *Nfactors = N;
-  uint *_factors_ = (uint*)malloc( N * sizeof(uint) );
+int memory_allocate (const int*, vec2_t, buffers_t*, plane_t*);
 
-  N   = 0;
-  f   = 2;
-  _A_ = A;
+int initialize ( 
+			MPI_Comm *Comm,               // MPI communicator	
+			int      Me,                  // the rank of the calling process
+			int      Ntasks,              // the total number of MPI ranks
+			int      argc,                // the argc from command line
+			char   **argv,                // the argv from command line
+			vec2_t  *S,                   // the size of the plane
+			vec2_t  *N,                   // two-uint array defining the MPI tasks' grid
+			int     *periodic,            // periodic-boundary tag
+			int     *output_energy_stat,  // whether to output energy statistics
+			int     *neighbours,          // four-int array that gives back the neighbours of the calling task
+			int     *Niterations,         // how many iterations
+			int     *Nsources,            // how many heat sources
+			int     *Nsources_local,      // number of heat sources on the local task
+			vec2_t **Sources_local,       // coordinates of the heat sources on the local task
+			double  *energy_per_source,   // how much heat per source
+			plane_t *planes,              // plane data
+			buffers_t *buffers            // buffers for communication
+			//int     *injection_frequency  // frequency of injection of energy
+		) {
 
-  while ( f < A )
-    {
-      while( _A_ % f == 0 ) {
-	_factors_[N++] = f;
-	_A_ /= f; }
-      f++;
-    }
+	int halt = 0;
+	int ret;
 
-  *factors = _factors_;
-  return 0;
-}
+	//? ················ set deffault values ················
 
+	(*S)[_x_]         = 10000;
+	(*S)[_y_]         = 10000;
+	*periodic         = 0;
+	*Nsources         = 4;
+	*Nsources_local   = 0;
+	*Sources_local    = NULL;
+	*Niterations      = 1000;
+	*energy_per_source = 1.0;
+	*output_energy_stat = 0;
 
-int initialize_sources( int       Me,
-			int       Ntasks,
-			MPI_Comm *Comm,
-			vec2_t    mysize,
-			int       Nsources,
-			int      *Nsources_local,
-			vec2_t  **Sources )
-
-{
-
-  srand48(time(NULL) ^ Me);
-  int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
-  
-  if ( Me == 0 )
-    {
-      for ( int i = 0; i < Nsources; i++ )
-	tasks_with_sources[i] = (int)lrand48() % Ntasks;
-    }
-  
-  MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
-
-  int nlocal = 0;
-  for ( int i = 0; i < Nsources; i++ )
-    nlocal += (tasks_with_sources[i] == Me);
-  *Nsources_local = nlocal;
-  
-  if ( nlocal > 0 )
-    {
-      vec2_t * restrict helper = (vec2_t*)malloc( nlocal * sizeof(vec2_t) );      
-      for ( int s = 0; s < nlocal; s++ )
-	{
-	  helper[s][_x_] = 1 + lrand48() % mysize[_x_];
-	  helper[s][_y_] = 1 + lrand48() % mysize[_y_];
+	if ( planes == NULL ) {
+			// manage the situation
 	}
 
-      *Sources = helper;
-    }
+	planes[OLD].size[0] = planes[OLD].size[0] = 0;
+	planes[NEW].size[0] = planes[NEW].size[0] = 0;
   
-  free( tasks_with_sources );
+  	for ( int i = 0; i < 4; i++ )
+    	neighbours[i] = MPI_PROC_NULL;
 
-  return 0;
+	
+	//? ··················· process the commadn line ·······················
+	
+	while ( 1 ) {
+		int opt;
+		while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:")) != -1) {
+			switch( opt ) {
+				case 'x': 
+					(*S)[_x_] = (uint)atoi(optarg);
+					break;
+				
+				case 'y': 
+					(*S)[_y_] = (uint)atoi(optarg);
+					break;
+				
+				case 'e': 
+					*Nsources = atoi(optarg);
+					break;
+				
+				case 'E': 
+					*energy_per_source = atof(optarg);
+					break;
+				
+				case 'n':
+					*Niterations = atoi(optarg);
+					break;
+				
+				case 'o': 
+					*output_energy_stat = (atoi(optarg) > 0);
+					break;
+
+				case 'p': 
+					*periodic = (atoi(optarg) > 0);
+					break;
+
+				case 'v': 
+					verbose = atoi(optarg);
+					break;
+					
+				case 'h':
+					if ( Me == 0 )
+						printf( "\nvalid options are ( values btw [] are the default values ):\n"
+								"-x    x size of the plate [10000]\n"
+								"-y    y size of the plate [10000]\n"
+								"-e    how many energy sources on the plate [4]\n"
+								"-E    how many energy sources on the plate [1.0]\n"
+								"-n    how many iterations [1000]\n"
+								"-p    whether periodic boundaries applies  [0 = false]\n\n"
+								"-o    output energy statistics [0 = false]\n"
+								"-v    verbose level [0]\n"
+								"-h    print this help message\n"
+						);
+				return 1;
+				
+				case ':':
+					printf( "option -%c requires an argument\n", optopt);
+					break;
+				
+				case '?':
+					printf(" -------- help unavailable ----------\n");
+					break;
+			}
+		}
+		
+		if ( opt == -1 )
+		break;
+	}
+
+	//? ······················ Check the parameters ······················
+
+	/*
+	if ( freq <= 0 )
+		*injection_frequency = 1;
+	else if ( freq <= 0 ) {
+		printf("Error: injection_frequency must be positive\n");
+		return 1;
+	} else {
+		freq = (freq > 1.0 ? 1.0 : freq );
+		*injection_frequency = freq * *Niterations;
+	}
+	*/
+	
+	if ( *Niterations <= 0 ) {
+		printf("Error: number of iterations must be positive\n");
+		return 1;
+	} else if ( *Niterations > 1000000 ) {
+		printf("Error: number of iterations must be less than 1000000\n");
+		return 1;
+	}
+	
+	if ( *Nsources <= 0 ) {
+		printf("Error: number of sources must be positive\n");
+		return 1;
+	} else if ( *Nsources > (*S)[_x_] * (*S)[_y_] ) {
+		printf("Error: number of sources must be less than or equal to the number of grid points\n");
+		return 1;
+	}
+	
+	if ( *energy_per_source <= 0 ) {
+		printf("Error: energy per source must be positive\n");
+		return 1;
+	}
+	
+	if ( *periodic < 0 || *periodic > 1 ) {
+		printf("Error: periodic boundary condition must be 0 or 1\n");
+		return 1;
+	}
+	
+	if ( *output_energy_stat < 0 || *output_energy_stat > 1 ) {
+		printf("Error: output energy statistics must be 0 or 1\n");
+		return 1;
+	}
+	
+	/*
+	* find a suitable domain decomposition
+	* very simple algorithm, you may want to
+	* substitute it with a better one
+	*
+	* the plane Sx x Sy will be solved with a grid
+	* of Nx x Ny MPI tasks
+	*/
+
+	vec2_t Grid;
+	// formfactor is the ratio of the x and y dimensions of the plane if x > y, or y / x if y > x
+	double formfactor = ((*S)[_x_] >= (*S)[_y_] ? (double)(*S)[_x_]/(*S)[_y_] : (double)(*S)[_y_]/(*S)[_x_] );
+	int    dimensions = 2 - (Ntasks <= ((int)formfactor+1) );
+	
+	if ( dimensions == 1 ) {
+		// if dimensions is 1, means that we can split the plane in a single row or column
+		if ( (*S)[_x_] >= (*S)[_y_] )
+			Grid[_x_] = Ntasks, Grid[_y_] = 1;
+		else
+			Grid[_x_] = 1, Grid[_y_] = Ntasks;
+    } else {
+		// if dimensions is 2, means that we can split the plane in a grid of Nx x Ny tasks
+		int   Nf;
+		uint *factors;
+		uint  first = 1;
+		ret = simple_factorization( Ntasks, &Nf, &factors );
+		
+		for ( int i = 0; (i < Nf) && ((Ntasks/first)/first > formfactor); i++ )
+			first *= factors[i];
+	
+		uint factor1 = first;
+		uint factor2 = Ntasks/first;
+
+		if ( (*S)[_x_] >= (*S)[_y_] ) {
+			// wide data, make grid wide
+			Grid[_x_] = (factor1 > factor2) ? factor1 : factor2;
+			Grid[_y_] = (factor1 > factor2) ? factor2 : factor1;
+		} else {
+			// tall or square data, make grid tall
+			Grid[_y_] = (factor1 > factor2) ? factor1 : factor2;
+			Grid[_x_] = (factor1 > factor2) ? factor2 : factor1;
+		}
+	}
+
+
+	(*N)[_x_] = Grid[_x_];
+	(*N)[_y_] = Grid[_y_];
+
+
+	//? ·········· my cooridnates in the grid of processors ··········
+	int X = Me % Grid[_x_];
+	int Y = Me / Grid[_x_];
+
+	//? ···················· find my neighbours ······················
+	if ( Grid[_x_] > 1 ) {  
+		if ( *periodic ) {       
+			// if periodic boundaries are applied, we can use the modulo operation to find the neighbours
+			neighbours[EAST]  = Y*Grid[_x_] + (X + 1 ) % Grid[_x_];
+			neighbours[WEST]  = Y*Grid[_x_] + (X - 1 + Grid[_x_]) % Grid[_x_];
+		} else {
+			// if periodic boundaries are not applied, we need to check if the neighbour is within the domain
+			// else, we set the neighbour to MPI_PROC_NULL
+			neighbours[EAST]  = ( X < Grid[_x_]-1 ? Me+1 : MPI_PROC_NULL );
+			neighbours[WEST]  = ( X > 0 ? Me-1 : MPI_PROC_NULL ); 
+		}  
+	}
+
+	if ( Grid[_y_] > 1 ) {
+		// same logic for the y direction
+		if ( *periodic ) {
+			neighbours[NORTH] = (Ntasks + Me - Grid[_x_]) % Ntasks;
+			neighbours[SOUTH] = (Ntasks + Me + Grid[_x_]) % Ntasks;
+		} else {    
+			neighbours[NORTH] = ( Y > 0 ? Me - Grid[_x_]: MPI_PROC_NULL );
+			neighbours[SOUTH] = ( Y < Grid[_y_]-1 ? Me + Grid[_x_] : MPI_PROC_NULL );
+		}
+	}
+
+	//? ··················· the size of my patch ···················
+
+	/*
+	* every MPI task determines the size sx x sy of its own domain
+	* REMIND: the computational domain will be embedded into a frame
+	*         that is (sx+2) x (sy+2)
+	*         the outern frame will be used for halo communication or
+	*/
+
+	vec2_t mysize;
+	uint s = (*S)[_x_] / Grid[_x_];
+	uint r = (*S)[_x_] % Grid[_x_];
+	// the last r tasks will have an extra grid point
+	mysize[_x_] = s + (X < r);
+
+	// same logic for the y direction
+	s = (*S)[_y_] / Grid[_y_];
+	r = (*S)[_y_] % Grid[_y_];
+	mysize[_y_] = s + (Y < r);
+
+	//? ························ verbose output ···························
+
+	if ( verbose > 0 ) {
+		if ( Me == 0 ) {
+			printf("Tasks are decomposed in a grid %d x %d\n\n",
+				Grid[_x_], Grid[_y_] );
+			fflush(stdout);
+		}
+		
+		MPI_Barrier(*Comm);
+      
+		if (Me == 0) {
+			printf("Neighbours:\n\n");
+			printf("   Task   N     E     S     W\n");
+			printf("  ============================\n");
+			fflush(stdout);
+		}
+		MPI_Barrier(*Comm);
+		for (int t = 0; t < Ntasks; t++) {
+			if (t == Me) {
+				printf("%5d %5d %5d %5d %5d\n",
+					Me,
+					neighbours[NORTH],
+					neighbours[EAST],
+					neighbours[SOUTH],
+					neighbours[WEST]
+				);
+				fflush(stdout);
+			}
+			MPI_Barrier(*Comm);
+		}
+		if (Me == 0) {
+			printf("\n");
+			fflush(stdout);
+		}
+		MPI_Barrier(*Comm);
+	}
+
+	//? ···················· initialize the buffers ·······················
+	for ( int b = 0; b < 2; b++ ) {
+		for ( int d = 0; d < 4; d++ ) {
+			buffers[b][d] = NULL;
+		}
+	}
+
+	//? ···················· allocate the needed memory ···················
+	ret = memory_allocate(neighbours, mysize, buffers, planes);
+
+	if (ret != 0) {
+		printf("Error: failed to allocate memory for the buffers\n");
+		return 1;
+	}
+		
+	//? ··················· allocae the heat sources ······················
+	ret = initialize_sources(Me, Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local);
+
+	if (ret != 0) {
+		printf("Error: failed to initialize the sources\n");
+		return 1;
+	}
+
+	return 0;  
+}
+
+uint simple_factorization( uint Ntasks, int *Nfactors, uint **factors ) {
+	/*
+	* rought factorization;
+	* assumes that A is small, of the order of <~ 10^5 max,
+	* since it represents the number of tasks
+	*/
+	
+	int N = 0;
+	int f = 2;
+	uint _A_ = Ntasks;
+	
+	uint temp_A = Ntasks;
+	while ( (unsigned int)f * f <= temp_A ) {
+		while( temp_A % f == 0 ) {
+			N++;
+			temp_A /= f;
+		}
+		f++;
+	}
+	if (temp_A > 1) {
+		N++;
+	}
+
+	*Nfactors = N;
+	if (N == 0) {
+		*factors = NULL;
+		return 0;
+	}
+
+	uint *_factors_ = (uint*)malloc( N * sizeof(uint) );
+	if (_factors_ == NULL) return 1;
+
+	N   = 0;
+	f   = 2;
+	_A_ = Ntasks;
+
+	while ( (unsigned int)f * f <= _A_ ) {
+		while( _A_ % f == 0 ) {
+			_factors_[N++] = f;
+			_A_ /= f;
+		}
+		f++;
+	}
+	if (_A_ > 1) {
+		_factors_[N++] = _A_;
+	}
+
+	*factors = _factors_;
+	return 0;
 }
 
 
+int initialize_sources( 
+			int       Me,               // the rank of the calling process
+			int       Ntasks,           // the total number of MPI ranks
+			MPI_Comm *Comm,             // MPI communicator
+			vec2_t    mysize,  			// size of the local task
+			int       Nsources, 		// number of heat sources
+			int      *Nsources_local, 	// number of heat sources on the local task
+			vec2_t  **Sources        	// coordinates of the heat sources on the local task
+		) {
 
-int memory_allocate ( const int       *neighbours  ,
-		      const vec2_t     N           ,
-		            buffers_t *buffers_ptr ,
-		            plane_t   *planes_ptr
-		      )
+	srand48(42 + Me);
+	int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
+  
+	if ( Me == 0 ) {
+		// always call lrand48 to keep the RNG state advancing consistently
+		for ( int i = 0; i < Nsources; i++ )
+			tasks_with_sources[i] = (int)lrand48() % Ntasks;
+	}
+  
+  	MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
 
-{
+	int nlocal = 0;
+	for ( int i = 0; i < Nsources; i++ )
+		nlocal += (tasks_with_sources[i] == Me);
+	*Nsources_local = nlocal;
+  
+	if ( nlocal > 0 ) {
+		vec2_t * restrict helper = (vec2_t*)malloc( nlocal * sizeof(vec2_t) );      
+		for ( int s = 0; s < nlocal; s++ ) {
+			helper[s][_x_] = 1 + lrand48() % mysize[_x_];
+			helper[s][_y_] = 1 + lrand48() % mysize[_y_];
+		}
+      	*Sources = helper;
+    }
+  
+  	free( tasks_with_sources );
+
+  	return 0;
+}
+
+int memory_allocate ( 
+			const int *neighbours,  // four-int array that gives back the neighbours of the calling task
+			vec2_t    mysize,       // size of the local task
+			buffers_t *buffers_ptr, // buffers for communication
+			plane_t   *planes_ptr   // plane data
+		) {
     /*
-      here you allocate the memory buffers that you need to
-      (i)  hold the results of your computation
-      (ii) communicate with your neighbours
+	here you allocate the memory buffers that you need to
+	(i)  hold the results of your computation
+	(ii) communicate with your neighbours
 
-      The memory layout that I propose to you is as follows:
+	The memory layout that I propose to you is as follows:
 
-      (i) --- calculations
-      you need 2 memory regions: the "OLD" one that contains the
-      results for the step (i-1)th, and the "NEW" one that will contain
-      the updated results from the step ith.
+	(i) --- calculations
+	you need 2 memory regions: the "OLD" one that contains the
+	results for the step (i-1)th, and the "NEW" one that will contain
+	the updated results from the step ith.
 
-      Then, the "NEW" will be treated as "OLD" and viceversa.
+	Then, the "NEW" will be treated as "OLD" and viceversa.
 
-      These two memory regions are indexed by *plate_ptr:
+	These two memory regions are indexed by *planes_ptr:
 
-      planew_ptr[0] ==> the "OLD" region
-      plamew_ptr[1] ==> the "NEW" region
+	planes_ptr[0] ==> the "OLD" region
+	plames_ptr[1] ==> the "NEW" region
 
 
-      (ii) --- communications
+	(ii) --- communications
 
-      you may need two buffers (one for sending and one for receiving)
-      for each one of your neighnours, that are at most 4:
-      north, south, east amd west.      
+	you may need two buffers (one for sending and one for receiving)
+	for each one of your neighnours, that are at most 4:
+	north, south, east amd west.      
 
-      To them you need to communicate at most mysizex or mysizey
-      daouble data.
+	To them you need to communicate at most mysizex or mysizey double data.
 
-      These buffers are indexed by the buffer_ptr pointer so
-      that
+	These buffers are indexed by the buffer_ptr pointer so that
 
-      (*buffers_ptr)[SEND][ {NORTH,...,WEST} ] = .. some memory regions
-      (*buffers_ptr)[RECV][ {NORTH,...,WEST} ] = .. some memory regions
-      
-      --->> Of course you can change this layout as you prefer
+	(*buffers_ptr)[SEND][ {NORTH,...,WEST} ] = .. some memory regions
+	(*buffers_ptr)[RECV][ {NORTH,...,WEST} ] = .. some memory regions
+	
+	--->> Of course you can change this layout as you prefer
       
      */
 
-  if (planes_ptr == NULL )
-    // an invalid pointer has been passed
-    // manage the situation
-    ;
+  	if (planes_ptr == NULL ) {
+		// an invalid pointer has been passed
+		// manage the situation
+		printf("Error: an invalid pointer has been passed\n");
+		return 1;
+	}
 
+	if (buffers_ptr == NULL ) {
+		// an invalid pointer has been passed
+		// manage the situation
+		printf("Error: an invalid pointer has been passed\n");
+		return 1;
+	}
 
-  if (buffers_ptr == NULL )
-    // an invalid pointer has been passed
-    // manage the situation
-    ;
-    
+	//? ············· allocate memory for data ··············
+	// we allocate the space needed for the plane plus a contour frame
+	// that will contains data form neighbouring MPI tasks
+ 
+	const uint register xsize = mysize[_x_];
+	const uint register ysize = mysize[_y_];
 
-  // ··················································
-  // allocate memory for data
-  // we allocate the space needed for the plane plus a contour frame
-  // that will contains data form neighbouring MPI tasks
-  unsigned int frame_size = (planes_ptr[OLD].size[_x_]+2) * (planes_ptr[OLD].size[_y_]+2);
+  	unsigned int frame_size = (xsize+2) * (ysize+2);
 
-  planes_ptr[OLD].data = (double*)malloc( frame_size * sizeof(double) );
-  if ( planes_ptr[OLD].data == NULL )
-    // manage the malloc fail
-    ;
-  memset ( planes_ptr[OLD].data, 0, frame_size * sizeof(double) );
+	planes_ptr[OLD].data = (double*)malloc(frame_size * sizeof(double));
+	if ( planes_ptr[OLD].data == NULL ) {
+		// manage the malloc fail
+		printf("Error: failed to allocate memory for the old plane\n");
+		return 1;
+	}
+	
+	memset(planes_ptr[OLD].data, 0, frame_size * sizeof(double));
+	
+	planes_ptr[NEW].data = (double*)malloc(frame_size * sizeof(double));
+	if ( planes_ptr[NEW].data == NULL ) {
+		// manage the malloc fail
+		printf("Error: failed to allocate memory for the new plane\n");
+		return 1;
+	}
 
-  planes_ptr[NEW].data = (double*)malloc( frame_size * sizeof(double) );
-  if ( planes_ptr[NEW].data == NULL )
-    // manage the malloc fail
-    ;
-  memset ( planes_ptr[NEW].data, 0, frame_size * sizeof(double) );
+	memset(planes_ptr[NEW].data, 0, frame_size * sizeof(double));
 
+	planes_ptr[OLD].size[_x_] = xsize;
+	planes_ptr[OLD].size[_y_] = ysize;
+	planes_ptr[NEW].size[_x_] = xsize;
+	planes_ptr[NEW].size[_y_] = ysize;
+	
+	//? ················· allocate buffers ·················
+	// buffers for north and south communication are not really needed
+	// in fact, they are already contiguous, just the first and last line of every rank's plane
+	// you may just make some pointers pointing to the correct positions
+	// or, if you prefer, just go on and allocate buffers also for north and south communications
 
-  // ··················································
-  // buffers for north and south communication 
-  // are not really needed
-  //
-  // in fact, they are already contiguous, just the
-  // first and last line of every rank's plane
-  //
-  // you may just make some pointers pointing to the
-  // correct positions
-  //
+	if (neighbours[EAST] != MPI_PROC_NULL || neighbours[WEST] != MPI_PROC_NULL) {
+		buffers_ptr[SEND][EAST] = (double*)malloc(ysize * sizeof(double));
+		buffers_ptr[RECV][EAST] = (double*)malloc(ysize * sizeof(double));
+		if (buffers_ptr[SEND][EAST] == NULL || buffers_ptr[RECV][EAST] == NULL) {
+			printf("Error: failed to allocate memory for the buffers\n");
+			return 1;
+		}
+		buffers_ptr[SEND][WEST] = (double*)malloc(ysize * sizeof(double));
+		buffers_ptr[RECV][WEST] = (double*)malloc(ysize * sizeof(double));
+		if (buffers_ptr[SEND][WEST] == NULL || buffers_ptr[RECV][WEST] == NULL) {
+			printf("Error: failed to allocate memory for the buffers\n");
+			return 1;
+		}
+	}
 
-  // or, if you preer, just go on and allocate buffers
-  // also for north and south communications
-
-  // ··················································
-  // allocate buffers
-  //
-
-
-
-
-  // ··················································
-
-  
-  return 0;
+  	return 0;
 }
 
+ int memory_release ( 
+			buffers_t *buffers,
+			plane_t   *planes,
+			vec2_t    *Sources_local
+		) {
 
+	// free the planes
+	if (planes != NULL) {
+		if ( planes[OLD].data != NULL ) free (planes[OLD].data);
+		if ( planes[NEW].data != NULL ) free (planes[NEW].data);
+	}
 
- int memory_release ( plane_t   *planes,
-		      ....
-		     )
-  
-{
+	// free the buffers
+	if (buffers != NULL) {
+		if (buffers[SEND][EAST] != NULL) free(buffers[SEND][EAST]);
+		if (buffers[RECV][EAST] != NULL) free(buffers[RECV][EAST]);
 
-  if ( planes != NULL )
-    {
-      if ( planes[OLD].data != NULL )
-	free (planes[OLD].data);
+		if (buffers[SEND][WEST] != NULL) free(buffers[SEND][WEST]);
+		if (buffers[RECV][WEST] != NULL) free(buffers[RECV][WEST]);
+	}
+
+	if (Sources_local != NULL && *Sources_local != NULL) free(*Sources_local);
       
-      if ( planes[NEW].data != NULL )
-	free (planes[NEW].data);
-    }
-
-      
-  return 0;
+  	return 0;
 }
 
+int output_energy_stat (int step, plane_t *plane, double budget, int Me, MPI_Comm *Comm) {
 
-
-int output_energy_stat ( int step, plane_t *plane, double budget, int Me, MPI_Comm *Comm )
-{
-
-  double system_energy = 0;
-  double tot_system_energy = 0;
-  get_total_energy ( plane, &system_energy );
+	double system_energy = 0;
+	double tot_system_energy = 0;
+	get_total_energy ( plane, &system_energy );
+	
+	MPI_Reduce ( &system_energy, &tot_system_energy, 1, MPI_DOUBLE, MPI_SUM, 0, *Comm );
   
-  MPI_Reduce ( &system_energy, &tot_system_energy, 1, MPI_DOUBLE, MPI_SUM, 0, *Comm );
-  
-  if ( Me == 0 )
-    {
-      if ( step >= 0 )
-	printf(" [ step %4d ] ", step ); fflush(stdout);
-
+	if ( Me == 0 ) {
+		if ( step >= 0 )
+			printf(" [ step %4d ] ", step ); fflush(stdout);
       
-      printf( "total injected energy is %g, "
-	      "system energy is %g "
-	      "( in avg %g per grid point)\n",
-	      budget,
-	      tot_system_energy,
-	      tot_system_energy / (plane->size[_x_]*plane->size[_y_]) );
+		printf( "total injected energy is %g, "
+			"system energy is %g "
+			"( in avg %g per grid point)\n",
+			budget,
+			tot_system_energy,
+			tot_system_energy / (plane->size[_x_]*plane->size[_y_]) 
+		);
     }
   
-  return 0;
+  	return 0;
 }
