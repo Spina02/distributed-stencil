@@ -3,6 +3,7 @@
  * See COPYRIGHT in top-level directory.
  */
 
+#define _GNU_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -31,6 +32,8 @@ double elapsed_time_ns;
 #define _x_ 0
 #define _y_ 1
 
+typedef unsigned int uint;
+
 
 
 //? ======================= function prototypes =======================
@@ -39,7 +42,7 @@ int initialize (int, char**, int*, int*, int*, int*, int**, double*, double**, i
 
 int memory_release ( double*, int* );
 
-extern int inject_energy ( const int, const int, const int*, const double, const int*, double*);
+extern int inject_energy ( const int, const int, const int*, const double, const int[2], double*);
 
 extern int update_plane (const int, const int[2], const double*, double* );
 
@@ -93,10 +96,9 @@ inline int update_plane (const int periodic, const int size[2], const double *ol
     *       calculation for its patch
     */
 
-    const int register fxsize = size[_x_]+2;
-    const int register fysize = size[_y_]+2;
-    const int register xsize = size[_x_];
-    const int register ysize = size[_y_];
+    register const int fxsize = size[_x_]+2;
+    register const int xsize = size[_x_];
+    register const int ysize = size[_y_];
     
    #define IDX( i, j ) ( (j)*fxsize + (i) )
 
@@ -112,7 +114,7 @@ inline int update_plane (const int periodic, const int size[2], const double *ol
     //? ······················ Optimized loop ······················
     double alpha = 0.6;
     double constant =  (1-alpha) / 4.0;
-    double sum_i, sum_j, result;
+    double result;
     
     for (int j = 1; j <= ysize; j++)
         for ( int i = 1; i <= xsize; i++)
@@ -163,8 +165,8 @@ inline int get_total_energy( const int size[2], const double *plane, double *ene
     * NOTE: this routine a good candidate for openmp parallelization
     */
 
-    const int register ysize = size[_y_]; // optimization
-    const int register xsize = size[_x_]; // read once
+    register const int ysize = size[_y_]; // optimization
+    register const int xsize = size[_x_]; // read once
     
     #define IDX( i, j ) ( (j)*(xsize+2) + (i) )
 

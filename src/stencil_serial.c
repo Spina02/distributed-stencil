@@ -21,10 +21,10 @@ int main(int argc, char **argv) {
 	int  S[2];
 	
 	int     Nsources;
-	int    *Sources;
+	int    *Sources = NULL;
 	double  energy_per_source;
 
-	double *planes[2];
+	double *planes[2] = {NULL, NULL};
 	
 	double injected_heat = 0;
 
@@ -140,8 +140,6 @@ int initialize (
 					int     *injection_frequency
 				) {
 
-  	int ret;
-  
 	//? ························ set default values ························
 
 	S[_x_]             		= 1000;
@@ -251,12 +249,12 @@ int initialize (
 
 	//?  ····················· allocae the needed memory ·····················
 
-	ret = memory_allocate( S, planes );
+	memory_allocate( S, planes );
 	
 
 	//? ······················ allocae the heat sources ······················
 
-	ret = initialize_sources( S, *Nsources, Sources );
+	initialize_sources( S, *Nsources, Sources );
 	
 	return 0;  
 }
@@ -272,10 +270,11 @@ int memory_allocate ( const int      size[2],
 	* in the integration loop then the roles are
 	* swapped at every iteration
 	*/
-  if (planes_ptr == NULL )
+  if (planes_ptr == NULL ) {
     // an invalid pointer has been passed
     // manage the situation
-    ;
+    return 1;
+  }
 
   //? ······················ allocate the memory for the planes ·····················
   unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
@@ -332,7 +331,7 @@ int dump ( const double *data, const uint size[2], const char *filename, double 
       double _min_ = DBL_MAX;
       double _max_ = 0;
 
-      for ( int j = 0; j < size[1]; j++ )
+      for ( uint j = 0; j < size[1]; j++ )
 	{
 	  /*
 	  float y = (float)j / size[1];
@@ -340,7 +339,7 @@ int dump ( const double *data, const uint size[2], const char *filename, double 
 	  */
 	  
 	  const double * restrict line = data + j*size[0];
-	  for ( int i = 0; i < size[0]; i++ ) {
+	  for ( uint i = 0; i < size[0]; i++ ) {
 	    array[i] = (float)line[i];
 	    _min_ = ( line[i] < _min_? line[i] : _min_ );
 	    _max_ = ( line[i] > _max_? line[i] : _max_ ); }
@@ -360,5 +359,6 @@ int dump ( const double *data, const uint size[2], const char *filename, double 
 
   else return 1;
   
+  return 0;
 }
 

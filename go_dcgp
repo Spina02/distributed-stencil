@@ -9,7 +9,7 @@
 #SBATCH --job-name=[your_choice]
 ##SBATCH --exclusive
 
-EXEC=[your_executable]
+EXEC=stencil_parallel
 
 # =======================================================
 
