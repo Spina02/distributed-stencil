@@ -70,11 +70,11 @@ inline int inject_energy (
                 {
                     if ( x == 1 )
                         plane[IDX(mysize[_x_]+1, y)] += energy;
-                    else if ( x == mysize[_x_] )
+                    if ( x == mysize[_x_] )
                         plane[IDX(0, y)] += energy;
                     if ( y == 1 )
                         plane[IDX(x, mysize[_y_]+1)] += energy;
-                    else if ( y == mysize[_y_] )
+                    if ( y == mysize[_y_] )
                         plane[IDX(x, 0)] += energy;
                 }
         }

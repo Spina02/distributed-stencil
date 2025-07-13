@@ -78,20 +78,29 @@ int main(int argc, char **argv) {
 
 		uint xframe = xsize + 2;
 
-		// Checking if buffers are allocated
-		if (buffers[SEND][WEST] != NULL && buffers[SEND][EAST] != NULL) {
+		// Checking if buffers are allocated and neighbors exist
+		if (neighbours[WEST] != MPI_PROC_NULL && buffers[SEND][WEST] != NULL) {
 			for (uint i = 0; i < ysize; i++) {
 				// WEST: first effective column (excluding frame)
 				buffers[SEND][WEST][i] = planes[current].data[(i + 1) * xframe + 1];
+			}
+		}
+		if (neighbours[EAST] != MPI_PROC_NULL && buffers[SEND][EAST] != NULL) {
+			for (uint i = 0; i < ysize; i++) {
 				// EAST: last effective column (excluding frame)
 				buffers[SEND][EAST][i] = planes[current].data[(i + 1) * xframe + xsize];
 			}
 		}
 
-		buffers[SEND][NORTH] = &(planes[current].data[xframe + 1]); 		// the first effective row
-		buffers[SEND][SOUTH] = &(planes[current].data[ysize * xframe + 1]); // the last effective row
-		buffers[RECV][NORTH] = &(planes[current].data[1]);
-		buffers[RECV][SOUTH] = &(planes[current].data[(ysize + 1) * xframe + 1]);
+		// For NORTH and SOUTH, we use direct pointers to contiguous data (no separate allocation needed)
+		if (neighbours[NORTH] != MPI_PROC_NULL) {
+			buffers[SEND][NORTH] = &(planes[current].data[xframe + 1]); 		// the first effective row
+			buffers[RECV][NORTH] = &(planes[current].data[1]);
+		}
+		if (neighbours[SOUTH] != MPI_PROC_NULL) {
+			buffers[SEND][SOUTH] = &(planes[current].data[ysize * xframe + 1]); // the last effective row
+			buffers[RECV][SOUTH] = &(planes[current].data[(ysize + 1) * xframe + 1]);
+		}
 		
 		//? - - - - - - - - - - - perform the halo communications - - - - - - - - - -
 		
@@ -100,32 +109,58 @@ int main(int argc, char **argv) {
 		//         --> can you overlap communication and compution in this way?
 
 		if (neighbours[EAST] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][EAST], (int)ysize, MPI_DOUBLE, neighbours[EAST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][EAST], (int)ysize, MPI_DOUBLE, neighbours[EAST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
+			// optimization: if the neighbor is the same rank, we can just copy the data
+			if (neighbours[EAST] == Rank) {
+				for (uint i = 0; i < ysize; i++) {
+					buffers[RECV][EAST][i] = buffers[SEND][EAST][i];
+				}
+			} else {
+				MPI_Isend(buffers[SEND][EAST], (int)ysize, MPI_DOUBLE, neighbours[EAST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
+				MPI_Irecv(buffers[RECV][EAST], (int)ysize, MPI_DOUBLE, neighbours[EAST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
+			}
 		}
 		if (neighbours[WEST] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][WEST], (int)ysize, MPI_DOUBLE, neighbours[WEST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][WEST], (int)ysize, MPI_DOUBLE, neighbours[WEST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
+			if (neighbours[WEST] == Rank) {
+				for (uint i = 0; i < ysize; i++) {
+					buffers[RECV][WEST][i] = buffers[SEND][WEST][i];
+				}
+			} else {
+				MPI_Isend(buffers[SEND][WEST], (int)ysize, MPI_DOUBLE, neighbours[WEST], TAG_W, myCOMM_WORLD, &reqs[nreqs++]);
+				MPI_Irecv(buffers[RECV][WEST], (int)ysize, MPI_DOUBLE, neighbours[WEST], TAG_E, myCOMM_WORLD, &reqs[nreqs++]);
+			}
 		}
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][NORTH], (int)xsize, MPI_DOUBLE, neighbours[NORTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][NORTH], (int)xsize, MPI_DOUBLE, neighbours[NORTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
+			if (neighbours[NORTH] == Rank) {
+				for (uint i = 0; i < xsize; i++) {
+					buffers[RECV][NORTH][i] = buffers[SEND][NORTH][i];
+				}
+			} else {
+				MPI_Isend(buffers[SEND][NORTH], (int)xsize, MPI_DOUBLE, neighbours[NORTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
+				MPI_Irecv(buffers[RECV][NORTH], (int)xsize, MPI_DOUBLE, neighbours[NORTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
+			}
 		}
 		if (neighbours[SOUTH] != MPI_PROC_NULL) {
-			MPI_Isend(buffers[SEND][SOUTH], (int)xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
-			MPI_Irecv(buffers[RECV][SOUTH], (int)xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
+			if (neighbours[SOUTH] == Rank) {
+				for (uint i = 0; i < xsize; i++) {
+					buffers[RECV][SOUTH][i] = buffers[SEND][SOUTH][i];
+				}
+			} else {
+				MPI_Isend(buffers[SEND][SOUTH], (int)xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_S, myCOMM_WORLD, &reqs[nreqs++]);
+				MPI_Irecv(buffers[RECV][SOUTH], (int)xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
+			}
 		}
 		
+		// We use Waitall to wait for all the requests to be completed
 		MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
 		
 		//? - - - - - - - - - - - - - - copy the haloes data - - - - - - - - - - - - - -
 
-		if (neighbours[WEST] != MPI_PROC_NULL) {
+		if (neighbours[WEST] != MPI_PROC_NULL && buffers[RECV][WEST] != NULL) {
 			for (uint i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + 0] = buffers[RECV][WEST][i];
 			}
 		}
-		if (neighbours[EAST] != MPI_PROC_NULL) {
+		if (neighbours[EAST] != MPI_PROC_NULL && buffers[RECV][EAST] != NULL) {
 			for (uint i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + (xsize + 1)] = buffers[RECV][EAST][i];
 			}
@@ -341,8 +376,10 @@ int main(int argc, char **argv) {
 
 	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
 	
-	memory_release( buffers, planes, Sources_local );
+	memory_release( neighbours, buffers, planes, &Sources_local);
 	
+	// Clean up the duplicated communicator
+	MPI_Comm_free(&myCOMM_WORLD);
 	
 	MPI_Finalize();
 	return 0;
@@ -577,6 +614,11 @@ int initialize (
 			// tall or square data, make grid tall
 			Grid[_y_] = (factor1 > factor2) ? factor1 : factor2;
 			Grid[_x_] = (factor1 > factor2) ? factor2 : factor1;
+		}
+		
+		// Free the factors array allocated by simple_factorization
+		if (factors != NULL) {
+			free(factors);
 		}
 	}
 
@@ -914,28 +956,32 @@ int memory_allocate (
 	// you may just make some pointers pointing to the correct positions
 	// or, if you prefer, just go on and allocate buffers also for north and south communications
 
-	if (neighbours[EAST] != MPI_PROC_NULL || neighbours[WEST] != MPI_PROC_NULL) {
+	if (neighbours[EAST] != MPI_PROC_NULL) {
 		buffers_ptr[SEND][EAST] = (double*)malloc(ysize * sizeof(double));
 		buffers_ptr[RECV][EAST] = (double*)malloc(ysize * sizeof(double));
 		if (buffers_ptr[SEND][EAST] == NULL || buffers_ptr[RECV][EAST] == NULL) {
-			printf("Error: failed to allocate memory for the buffers\n");
-			return 1;
-		}
-		buffers_ptr[SEND][WEST] = (double*)malloc(ysize * sizeof(double));
-		buffers_ptr[RECV][WEST] = (double*)malloc(ysize * sizeof(double));
-		if (buffers_ptr[SEND][WEST] == NULL || buffers_ptr[RECV][WEST] == NULL) {
-			printf("Error: failed to allocate memory for the buffers\n");
+			printf("Error: failed to allocate memory for the EAST buffers\n");
 			return 1;
 		}
 	}
+	if (neighbours[WEST] != MPI_PROC_NULL) {
+		buffers_ptr[SEND][WEST] = (double*)malloc(ysize * sizeof(double));
+		buffers_ptr[RECV][WEST] = (double*)malloc(ysize * sizeof(double));
+		if (buffers_ptr[SEND][WEST] == NULL || buffers_ptr[RECV][WEST] == NULL) {
+			printf("Error: failed to allocate memory for the WEST buffers\n");
+			return 1;
+		}
+	}
+
 
   	return 0;
 }
 
  int memory_release ( 
+			const int *neighbours,
 			buffers_t *buffers,
 			plane_t   *planes,
-			vec2_t    *Sources_local
+			vec2_t    **Sources_local
 		) {
 
 	// free the planes
@@ -946,15 +992,22 @@ int memory_allocate (
 
 	// free the buffers
 	if (buffers != NULL) {
-		if (buffers[SEND][EAST] != NULL) free(buffers[SEND][EAST]);
-		if (buffers[RECV][EAST] != NULL) free(buffers[RECV][EAST]);
+		if (neighbours[EAST] != MPI_PROC_NULL) {
+			if (buffers[SEND][EAST] != NULL) free(buffers[SEND][EAST]);
+			if (buffers[RECV][EAST] != NULL) free(buffers[RECV][EAST]);
+		}
 
-		if (buffers[SEND][WEST] != NULL) free(buffers[SEND][WEST]);
-		if (buffers[RECV][WEST] != NULL) free(buffers[RECV][WEST]);
+		if (neighbours[WEST] != MPI_PROC_NULL) {
+			if (buffers[SEND][WEST] != NULL) free(buffers[SEND][WEST]);
+			if (buffers[RECV][WEST] != NULL) free(buffers[RECV][WEST]);
+		}
 	}
 
-	if (Sources_local != NULL && *Sources_local != NULL) free(*Sources_local);
-      
+	if (Sources_local != NULL && *Sources_local != NULL) {
+		free(*Sources_local);
+		*Sources_local = NULL;
+	}
+
   	return 0;
 }
 

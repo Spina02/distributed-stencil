@@ -50,7 +50,7 @@ extern int get_total_energy(plane_t*, double*);
 
 int initialize (MPI_Comm *, int, int, int, char**, vec2_t*, vec2_t*, int*, int*, int*, int*, int*, int*, vec2_t  **, double   *, plane_t  *, buffers_t * );
 
-int memory_release (buffers_t *, plane_t *, vec2_t *);
+int memory_release (const int *, buffers_t *, plane_t *, vec2_t **);
 
 int output_energy_stat (int, plane_t *, double, int, MPI_Comm *);
 
@@ -67,7 +67,6 @@ inline int inject_energy (
     ) {
 
     const uint xsize = plane->size[_x_]+2;
-    const uint ysize = plane->size[_y_]+2;
     double * restrict data = plane->data;
     
     #define IDX( i, j ) ( (j)*xsize + (i) )
@@ -83,15 +82,15 @@ inline int inject_energy (
                 if ( (N[_x_] == 1)  ) { 
                     // in this case there is only a column of tasks
                     // we proceed as in the serial version
-                    data[IDX(0, y)]       += data[IDX(xsize, y)]; // Ovest from East
-                    data[IDX(xsize+1, y)] += data[IDX(1, y)];     // East from Ovest
+                    data[IDX(0, y)]                    += data[IDX(plane->size[_x_]+1, y)]; // West from East
+                    data[IDX(plane->size[_x_]+1, y)]   += data[IDX(1, y)];                 // East from West
                 }
                 
                 if ( (N[_y_] == 1) ) {
                     // in this case there is only a row of tasks
-                    // we proceed as in the serial version
-                    data[IDX(x, 0)]       += data[IDX(x, ysize)]; // South from North
-                    data[IDX(x, ysize+1)] += data[IDX(x, 1)];     // North from South
+                    // we proceed as in the serial version  
+                    data[IDX(x, 0)]                    += data[IDX(x, plane->size[_y_]+1)]; // North from South
+                    data[IDX(x, plane->size[_y_]+1)]   += data[IDX(x, 1)];                 // South from North
                 }
             }                
         }
