@@ -9,22 +9,26 @@ int seed = 0; // default is random itself
 
 int main(int argc, char **argv) {
 
+	double comm_time = 0.0, comp_time = 0.0, total_time, init_time;
+	double start_time_comm, start_time_comp;
+
+	
 	MPI_Comm myCOMM_WORLD;      // MPI communicator
 	int  Rank, Ntasks;			// Rank: the rank of the calling process, Ntasks: the total number of MPI ranks
-
+	
 	int neighbours[4];       	// 0: North, 1: South, 2: East, 3: West
 	int  Niterations;          	// number of iterations
 	int  periodic;             	// periodic boundary condition
 	vec2_t S, N;                // size of the plane and size of MPI tasks
-
+	
 	int      Nsources;          // number of heat sources
 	int      Nsources_local;    // number of heat sources on the local task
 	vec2_t  *Sources_local;     // coordinates of the heat sources on the local task
 	double   energy_per_source; // energy per source
-
+	
 	plane_t   planes[2];   		// two planes for the two iterations (current and next)
 	buffers_t buffers[2]; 		// two buffers for the two iterations (send and receive)
-  
+	
 	int output_energy_stat_perstep; // whether to output energy statistics per step
 	
 	//? ························ initialize MPI envrionment ························
@@ -37,14 +41,16 @@ int main(int argc, char **argv) {
 		if ( level_obtained < MPI_THREAD_FUNNELED ) {
 			printf("MPI_thread level obtained is %d instead of %d\n", level_obtained, MPI_THREAD_FUNNELED );
 			MPI_Finalize();
-			exit(1); }
-		
+			exit(1); 
+		}
+			
 		MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
 		MPI_Comm_size(MPI_COMM_WORLD, &Ntasks);
 		MPI_Comm_dup (MPI_COMM_WORLD, &myCOMM_WORLD);
 	}
-  
-	//? ························ argument checking and setting ························
+		
+		//? ························ argument checking and setting ························
+		init_time = MPI_Wtime();
 
 
 	int ret = initialize (&myCOMM_WORLD, Rank, Ntasks, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,neighbours,
@@ -58,43 +64,54 @@ int main(int argc, char **argv) {
     }
 
 	//? -------------------------------- Core loop --------------------------------
-	
 	int current = OLD;
-	double t1 = MPI_Wtime();   /* take wall-clock time */
+
+	uint ysize = planes[current].size[_y_];
+	uint xsize = planes[current].size[_x_];
+	uint xframe = xsize + 2;
+
+	init_time = MPI_Wtime() - init_time;
+	total_time = MPI_Wtime();
 	
 	for (int iter = 0; iter < Niterations; ++iter) {
-      
+		
 		MPI_Request reqs[8];
 		int nreqs = 0;
 		
 		//? - - - - - - - - - - inject energy from new sources - - - - - - - - - - -
-
+		
 		#pragma GCC diagnostic push
 		#pragma GCC diagnostic ignored "-Wpedantic"
 		inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, &planes[current], N );
 		#pragma GCC diagnostic pop
-
+		
 		//?- - - - - - - - - - - - - prepare the buffers - - - - - - - - - - - - - -
-
-		uint ysize = planes[current].size[_y_];
-		uint xsize = planes[current].size[_x_];
-
-		uint xframe = xsize + 2;
-
+		
 		// Checking if buffers are allocated and neighbors exist
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[SEND][WEST] != NULL) {
+			#pragma GCC ivdep
 			for (uint i = 0; i < ysize; i++) {
 				// WEST: first effective column (excluding frame)
 				buffers[SEND][WEST][i] = planes[current].data[(i + 1) * xframe + 1];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[SEND][EAST] != NULL) {
+			#pragma GCC ivdep
 			for (uint i = 0; i < ysize; i++) {
 				// EAST: last effective column (excluding frame)
 				buffers[SEND][EAST][i] = planes[current].data[(i + 1) * xframe + xsize];
 			}
 		}
-
+		
+		
+		//? - - - - - - - - - - - perform the halo communications - - - - - - - - - -
+		
+		//     (1) use Send / Recv
+		//     (2) use Isend / Irecv
+		//         --> can you overlap communication and compution in this way?
+		
+		start_time_comm = MPI_Wtime();
+		
 		// For NORTH and SOUTH, we use direct pointers to contiguous data (no separate allocation needed)
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
 			buffers[SEND][NORTH] = &(planes[current].data[xframe + 1]); 		// the first effective row
@@ -104,16 +121,10 @@ int main(int argc, char **argv) {
 			buffers[SEND][SOUTH] = &(planes[current].data[ysize * xframe + 1]); // the last effective row
 			buffers[RECV][SOUTH] = &(planes[current].data[(ysize + 1) * xframe + 1]);
 		}
-		
-		//? - - - - - - - - - - - perform the halo communications - - - - - - - - - -
-		
-		//     (1) use Send / Recv
-		//     (2) use Isend / Irecv
-		//         --> can you overlap communication and compution in this way?
-
 		if (neighbours[EAST] != MPI_PROC_NULL) {
 			// optimization: if the neighbor is the same rank, we can just copy the data
 			if (neighbours[EAST] == Rank) {
+				#pragma GCC ivdep
 				for (uint i = 0; i < ysize; i++) {
 					buffers[RECV][EAST][i] = buffers[SEND][EAST][i];
 				}
@@ -124,6 +135,7 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[WEST] != MPI_PROC_NULL) {
 			if (neighbours[WEST] == Rank) {
+				#pragma GCC ivdep
 				for (uint i = 0; i < ysize; i++) {
 					buffers[RECV][WEST][i] = buffers[SEND][WEST][i];
 				}
@@ -134,6 +146,7 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
 			if (neighbours[NORTH] == Rank) {
+				#pragma GCC ivdep
 				for (uint i = 0; i < xsize; i++) {
 					buffers[RECV][NORTH][i] = buffers[SEND][NORTH][i];
 				}
@@ -144,6 +157,7 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[SOUTH] != MPI_PROC_NULL) {
 			if (neighbours[SOUTH] == Rank) {
+				#pragma GCC ivdep
 				for (uint i = 0; i < xsize; i++) {
 					buffers[RECV][SOUTH][i] = buffers[SEND][SOUTH][i];
 				}
@@ -152,18 +166,30 @@ int main(int argc, char **argv) {
 				MPI_Irecv(buffers[RECV][SOUTH], (int)xsize, MPI_DOUBLE, neighbours[SOUTH], TAG_N, myCOMM_WORLD, &reqs[nreqs++]);
 			}
 		}
+
+		// Add communication setup time
+		comm_time += MPI_Wtime() - start_time_comm;
+
+		// update the internal points
+		start_time_comp = MPI_Wtime();
+		update_internal( &planes[current], &planes[!current] );
+		comp_time += MPI_Wtime() - start_time_comp;
 		
-		// We use Waitall to wait for all the requests to be completed
+		// Wait for communication to complete
+		start_time_comm = MPI_Wtime();
 		MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
+		comm_time += MPI_Wtime() - start_time_comm;
 		
 		//? - - - - - - - - - - - - - - copy the haloes data - - - - - - - - - - - - - -
 
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[RECV][WEST] != NULL) {
+			#pragma GCC ivdep
 			for (uint i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + 0] = buffers[RECV][WEST][i];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[RECV][EAST] != NULL) {
+			#pragma GCC ivdep
 			for (uint i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + (xsize + 1)] = buffers[RECV][EAST][i];
 			}
@@ -171,7 +197,10 @@ int main(int argc, char **argv) {
 
 		//? - - - - - - - - - - - - - - - update grid points - - - - - - - - - - - - - -
 
-		update_plane( periodic, N, &planes[current], &planes[!current] );
+		start_time_comp = MPI_Wtime();
+		update_border( periodic, N, &planes[current], &planes[!current] );
+		//update_plane( periodic, N, &planes[current], &planes[!current] );
+		comp_time += MPI_Wtime() - start_time_comp;
 
 
 		//! ------------------------- Print the surface at each step -------------------------
@@ -180,7 +209,8 @@ int main(int argc, char **argv) {
 		//!  		               since it looses the parallelization
 		//!
 		//! ----------------------------------------------------------------------------------
-		if (verbose > 1) {
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 2
+		{
 			// Gather local grid sizes and data to rank 0
 			uint p_xsize = planes[!current].size[_x_];
 			uint p_ysize = planes[!current].size[_y_];
@@ -362,6 +392,7 @@ int main(int argc, char **argv) {
 				MPI_Barrier(myCOMM_WORLD);
 			}
 		}
+#endif
 		//! -------------------------------- End of printing ---------------------------------
 
 		//? - - - - - - - - - - - - - - output energy statistics - - - - - - - - - - - - - - -
@@ -373,9 +404,19 @@ int main(int argc, char **argv) {
       
     }
   
-	t1 = MPI_Wtime() - t1;
+	total_time = MPI_Wtime() - total_time;
 
-	if (verbose > 0) printf("Time taken: %f seconds\n", t1);
+	if (Rank == 0) {
+		printf("Total time: %f\n", total_time);
+		printf("Initialization time: %f\n", init_time);
+		printf("Computation time: %f\n", comp_time);
+		printf("Communication time: %f\n", comm_time);
+		printf("Communication/Total ratio: %.2f%%\n", (comm_time/total_time)*100.0);
+		printf("Computation/Total ratio: %.2f%%\n", (comp_time/total_time)*100.0);
+		printf("Other time (overhead): %f (%.2f%%)\n", 
+			total_time - comp_time - comm_time, 
+			((total_time - comp_time - comm_time)/total_time)*100.0);
+	}
 
 	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
 	
@@ -445,78 +486,84 @@ int initialize (
   	for ( int i = 0; i < 4; i++ ) 
 		neighbours[i] = MPI_PROC_NULL;
 
-
 	// set random seed according to time
 	seed = (int)time(NULL);
 	
 	//? ··················· process the commadn line ·······················
 	
-	while ( 1 ) {
-		int opt;
-		while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:s:")) != -1) {
-			switch( opt ) {
-				case 'x': 
-					(*S)[_x_] = (uint)atoi(optarg);
-					break;
-				
-				case 'y': 
-					(*S)[_y_] = (uint)atoi(optarg);
-					break;
-				
-				case 'e': 
-					*Nsources = atoi(optarg);
-					break;
-				
-				case 'E': 
-					*energy_per_source = atof(optarg);
-					break;
-				
-				case 'n':
-					*Niterations = atoi(optarg);
-					break;
-				
-				case 'o': 
-					*output_energy_stat = (atoi(optarg) > 0);
-					break;
+	int opt;
+	while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:s:")) != -1) {
+		switch( opt ) {
+			case 'x': 
+				(*S)[_x_] = (uint)atoi(optarg);
+				break;
+			
+			case 'y': 
+				(*S)[_y_] = (uint)atoi(optarg);
+				break;
+			
+			case 'e': 
+				*Nsources = atoi(optarg);
+				break;
+			
+			case 'E': 
+				*energy_per_source = atof(optarg);
+				break;
+			
+			case 'n':
+				*Niterations = atoi(optarg);
+				break;
+			
+			case 'o': 
+				*output_energy_stat = (atoi(optarg) > 0);
+				break;
 
-				case 'p': 
-					*periodic = (atoi(optarg) > 0);
-					break;
+			case 'p': 
+				*periodic = (atoi(optarg) > 0);
+				break;
 
-				case 'v': 
-					verbose = atoi(optarg);
-					break;
+			case 'v': 
+#if defined(VERBOSE_LEVEL)
+				verbose = atoi(optarg);
+#else
+				if ( Me == 0 )
+					printf("Warning: verbose option ignored (compile with verbose1/verbose2 for verbose output)\n");
+#endif
+				break;
 
-				case 's':
-					seed = atoi(optarg);
-					break;
-				case 'h':
-					if ( Me == 0 )
-						printf( "\nvalid options are ( values btw [] are the default values ):\n"
-								"-x    x size of the plate [10000]\n"
-								"-y    y size of the plate [10000]\n"
-								"-e    how many energy sources on the plate [4]\n"
-								"-E    how many energy sources on the plate [1.0]\n"
-								"-n    how many iterations [1000]\n"
-								"-p    whether periodic boundaries applies  [0 = false]\n\n"
-								"-o    output energy statistics [0 = false]\n"
-								"-v    verbose level [0]\n"
-								"-h    print this help message\n"
-						);
-				return 1;
-				
-				case ':':
-					printf( "option -%c requires an argument\n", optopt);
-					break;
-				
-				case '?':
-					printf(" -------- help unavailable ----------\n");
-					break;
-			}
+			case 's':
+				seed = atoi(optarg);
+				break;
+			case 'h':
+				if ( Me == 0 )
+					printf( "\nvalid options are ( values btw [] are the default values ):\n"
+							"-x    x size of the plate [10000]\n"
+							"-y    y size of the plate [10000]\n"
+							"-e    how many energy sources on the plate [4]\n"
+							"-E    how many energy sources on the plate [1.0]\n"
+							"-n    how many iterations [1000]\n"
+							"-p    whether periodic boundaries applies  [0 = false]\n\n"
+							"-o    output energy statistics [0 = false]\n"
+#if defined(VERBOSE_LEVEL)
+							"-v    verbose level [0] (compile-time level: %d)\n"
+#else
+							"-v    verbose level [disabled - use 'make verbose1/verbose2']\n"
+#endif
+							"-h    print this help message\n"
+#if defined(VERBOSE_LEVEL)
+					, VERBOSE_LEVEL
+#endif
+					);
+			return 1;
+			
+			case ':':
+				printf( "option -%c requires an argument\n", optopt);
+				break;
+			
+			case '?':
+				printf(" -------- help unavailable ----------\n");
+				break;
 		}
-		
-		if ( opt == -1 )
-		break;
 	}
 
 	//? ······················ Check the parameters ······················
@@ -574,8 +621,8 @@ int initialize (
 	
 	/*
 	* find a suitable domain decomposition
-	* very simple algorithm, you may want to
-	* substitute it with a better one
+	* OPTIMIZED algorithm to minimize communication overhead
+	* by creating grid decompositions as close to square as possible
 	*
 	* the plane Sx x Sy will be solved with a grid
 	* of Nx x Ny MPI tasks
@@ -608,15 +655,16 @@ int initialize (
 	
 		uint factor1 = first;
 		uint factor2 = (uint)Ntasks/first;
+		uint who_max = (factor1 > factor2);
 
 		if ( (*S)[_x_] >= (*S)[_y_] ) {
 			// wide data, make grid wide
-			Grid[_x_] = (factor1 > factor2) ? factor1 : factor2;
-			Grid[_y_] = (factor1 > factor2) ? factor2 : factor1;
+			Grid[_x_] = who_max ? factor1 : factor2;
+			Grid[_y_] = who_max ? factor2 : factor1;
 		} else {
 			// tall or square data, make grid tall
-			Grid[_y_] = (factor1 > factor2) ? factor1 : factor2;
-			Grid[_x_] = (factor1 > factor2) ? factor2 : factor1;
+			Grid[_y_] = who_max ? factor1 : factor2;
+			Grid[_x_] = who_max ? factor2 : factor1;
 		}
 		
 		// Free the factors array allocated by simple_factorization
@@ -682,41 +730,41 @@ int initialize (
 
 	//? ························ verbose output ···························
 
-	if ( verbose > 0 ) {
-		if ( Me == 0 ) {
-			printf("Tasks are decomposed in a grid %d x %d\n\n",
-				Grid[_x_], Grid[_y_] );
-			fflush(stdout);
-		}
-		
-		MPI_Barrier(*Comm);
-      
-		if (Me == 0) {
-			printf("Neighbours:\n\n");
-			printf("   Task   N     E     S     W\n");
-			printf("  ============================\n");
-			fflush(stdout);
-		}
-		MPI_Barrier(*Comm);
-		for (int t = 0; t < Ntasks; t++) {
-			if (t == Me) {
-				printf("%5d %5d %5d %5d %5d\n",
-					Me,
-					neighbours[NORTH],
-					neighbours[EAST],
-					neighbours[SOUTH],
-					neighbours[WEST]
-				);
-				fflush(stdout);
-			}
-			MPI_Barrier(*Comm);
-		}
-		if (Me == 0) {
-			printf("\n");
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 1
+	if ( Me == 0 ) {
+		printf("Tasks are decomposed in a grid %d x %d\n\n",
+			Grid[_x_], Grid[_y_] );
+		fflush(stdout);
+	}
+	
+	MPI_Barrier(*Comm);
+  
+	if (Me == 0) {
+		printf("Neighbours:\n\n");
+		printf("   Task   N     E     S     W\n");
+		printf("  ============================\n");
+		fflush(stdout);
+	}
+	MPI_Barrier(*Comm);
+	for (int t = 0; t < Ntasks; t++) {
+		if (t == Me) {
+			printf("%5d %5d %5d %5d %5d\n",
+				Me,
+				neighbours[NORTH],
+				neighbours[EAST],
+				neighbours[SOUTH],
+				neighbours[WEST]
+			);
 			fflush(stdout);
 		}
 		MPI_Barrier(*Comm);
 	}
+	if (Me == 0) {
+		printf("\n");
+		fflush(stdout);
+	}
+	MPI_Barrier(*Comm);
+#endif
 
 	//? ···················· initialize the buffers ·······················
 	for ( int b = 0; b < 2; b++ ) {
@@ -930,7 +978,8 @@ int memory_allocate (
 
   	unsigned int frame_size = (xsize+2) * (ysize+2);
 
-	planes_ptr[OLD].data = (double*)malloc(frame_size * sizeof(double));
+	// Allocate aligned memory for better cache performance
+	planes_ptr[OLD].data = (double*)aligned_alloc(64, frame_size * sizeof(double));
 	if ( planes_ptr[OLD].data == NULL ) {
 		// manage the malloc fail
 		printf("Error: failed to allocate memory for the old plane\n");
@@ -939,7 +988,7 @@ int memory_allocate (
 	
 	memset(planes_ptr[OLD].data, 0, frame_size * sizeof(double));
 	
-	planes_ptr[NEW].data = (double*)malloc(frame_size * sizeof(double));
+	planes_ptr[NEW].data = (double*)aligned_alloc(64, frame_size * sizeof(double));
 	if ( planes_ptr[NEW].data == NULL ) {
 		// manage the malloc fail
 		printf("Error: failed to allocate memory for the new plane\n");
@@ -960,16 +1009,16 @@ int memory_allocate (
 	// or, if you prefer, just go on and allocate buffers also for north and south communications
 
 	if (neighbours[EAST] != MPI_PROC_NULL) {
-		buffers_ptr[SEND][EAST] = (double*)malloc(ysize * sizeof(double));
-		buffers_ptr[RECV][EAST] = (double*)malloc(ysize * sizeof(double));
+		buffers_ptr[SEND][EAST] = (double*)aligned_alloc(64, ysize * sizeof(double));
+		buffers_ptr[RECV][EAST] = (double*)aligned_alloc(64, ysize * sizeof(double));
 		if (buffers_ptr[SEND][EAST] == NULL || buffers_ptr[RECV][EAST] == NULL) {
 			printf("Error: failed to allocate memory for the EAST buffers\n");
 			return 1;
 		}
 	}
 	if (neighbours[WEST] != MPI_PROC_NULL) {
-		buffers_ptr[SEND][WEST] = (double*)malloc(ysize * sizeof(double));
-		buffers_ptr[RECV][WEST] = (double*)malloc(ysize * sizeof(double));
+		buffers_ptr[SEND][WEST] = (double*)aligned_alloc(64, ysize * sizeof(double));
+		buffers_ptr[RECV][WEST] = (double*)aligned_alloc(64, ysize * sizeof(double));
 		if (buffers_ptr[SEND][WEST] == NULL || buffers_ptr[RECV][WEST] == NULL) {
 			printf("Error: failed to allocate memory for the WEST buffers\n");
 			return 1;

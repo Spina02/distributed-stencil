@@ -6,6 +6,8 @@
  */
  
  #include "stencil_serial.h"
+
+ int verbose = 0;
  
  int dump ( const double *, const uint [2], const char *, double *, double * );
 
@@ -18,8 +20,7 @@ int main(int argc, char **argv) {
 
 	int  Niterations;
 	int  periodic;
-	int  S[2];
-	
+	int  S[2];	
 	int     Nsources;
 	int    *Sources = NULL;
 	double  energy_per_source;
@@ -54,6 +55,7 @@ int main(int argc, char **argv) {
 
 		// //! ------------------------------ DEBUG ------------------------------
 		/* Print the surface at each step */
+		if (verbose > 1) {
 		printf("Surface at step %d:\n", iter);
 		for (int j = 1; j <= S[1]; j++) {
 			for (int i = 1; i <= S[0]; i++) {
@@ -62,6 +64,7 @@ int main(int argc, char **argv) {
 			printf("\n");
 		}
 		printf("\n");
+		}
 		// //! --------------------------------------------------------------------
 
 		if ( output_energy_at_steps ) {
@@ -101,7 +104,6 @@ int main(int argc, char **argv) {
 	printf("Execution time: %f seconds\n", elapsed_time_ns / 1e9);
 
 	return 0;
-
 }
 
 
@@ -122,7 +124,6 @@ int main(int argc, char **argv) {
 
 
 int memory_allocate(const int[2], double**);
-
 
 int initialize_sources(uint[2], int, int**);
 
@@ -146,7 +147,7 @@ int initialize (
 	S[_y_]             		= 1000;
    	*periodic          		= 0;
 	*Nsources          		= 4;
-	*Niterations       		= 99;
+	*Niterations       		= 100;
 	*output_energy_at_steps = 0;
 	*energy_per_source 		= 1.0;
 	*injection_frequency 	= *Niterations;
@@ -155,7 +156,7 @@ int initialize (
 	
 	//? ····················· process the commadn line ·····················
     int opt;
-    while((opt = getopt(argc, argv, ":x:y:e:E:f:n:p:o:h")) != -1) {
+    while((opt = getopt(argc, argv, ":x:y:e:E:f:n:p:o:v:h")) != -1) {
 	switch( opt ) {
 		case 'x': S[_x_] = (uint)atoi(optarg);
 			break;
@@ -180,6 +181,9 @@ int initialize (
 
 		case 'f': freq = atof(optarg);
 			break;
+
+		case 'v': verbose = atoi(optarg);
+			break;
 			
 	  	case 'h': printf( "valid options are ( values btw [] are the default values ):\n"
 			"-x    x size of the plate [1000]\n"
@@ -190,6 +194,7 @@ int initialize (
 			"-n    how many iterations [100]\n"
 			"-p    whether periodic boundaries applies  [0 = false]\n"
 			"-o    whether to print the energy budgest at every step [0 = false]\n"
+			"-v    verbose level [0]\n"
 			);
 	    	break;
 	    

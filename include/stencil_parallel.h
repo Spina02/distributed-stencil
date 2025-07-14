@@ -126,10 +126,10 @@ inline int update_plane (
         double * restrict old = oldplane->data;
         double * restrict new = newplane->data;
 
-        double alpha = 0.6;
-        double constant =  (1-alpha) / 4.0;
-        double result;
+        const double alpha = 0.6;
+        const double constant =  (1-alpha) / 4.0;
         
+        #pragma omp parallel for schedule(static) collapse(2)
         for (uint j = 1; j <= ysize; j++) {
             for ( uint i = 1; i <= xsize; i++)
                 {
@@ -139,11 +139,10 @@ inline int update_plane (
                     //       plate and always have a value of 0, i.e. they are an
                     //       "infinite sink" of heat
                     
-                    // five-points stencil formula
-
-                    result = old[ IDX(i,j) ] * alpha + (old[IDX(i-1, j)] + old[IDX(i+1, j)] + old[IDX(i, j-1)] + old[IDX(i, j+1)]) * constant;
-
-                    new[ IDX(i,j) ] = result;
+                    // five-points stencil formula - optimized for better cache locality
+                    const double center = old[ IDX(i,j) ];
+                    const double neighbors = old[IDX(i-1, j)] + old[IDX(i+1, j)] + old[IDX(i, j-1)] + old[IDX(i, j+1)];
+                    new[ IDX(i,j) ] = center * alpha + neighbors * constant;
                 }
         }
 
@@ -173,7 +172,119 @@ inline int update_plane (
     return 0;
 }
 
+inline int update_internal( 
+        const plane_t  *oldplane,
+        plane_t        *newplane
+    ) {
 
+    const uint xsize = oldplane->size[_x_];
+    const uint ysize = oldplane->size[_y_];
+
+    const uint fxsize = xsize+2;
+
+    #define IDX( i, j ) ( (j)*fxsize + (i) )
+
+        // HINT: you may attempt to
+        //       (i)  manually unroll the loop
+        //       (ii) ask the compiler to do it
+        // for instance
+        // #pragma GCC unroll 4
+        //
+        // HINT: in any case, this loop is a good candidate
+        //       for openmp parallelization
+
+        double * restrict old = oldplane->data;
+        double * restrict new = newplane->data;
+
+        const double alpha = 0.6;
+        const double constant =  (1-alpha) / 4.0;
+        
+        #pragma omp parallel for schedule(static) collapse(2)
+        for (uint j = 2; j <= ysize-1; j++) {
+            for ( uint i = 2; i <= xsize-1; i++)
+                {
+                    // NOTE: (i-1,j), (i+1,j), (i,j-1) and (i,j+1) always exist even
+                    //       if this patch is at some border without periodic conditions;
+                    //       in that case it is assumed that the +-1 points are outside the
+                    //       plate and always have a value of 0, i.e. they are an
+                    //       "infinite sink" of heat
+                    
+                    // five-points stencil formula - optimized for better cache locality
+                    const double center = old[ IDX(i,j) ];
+                    const double neighbors = old[IDX(i-1, j)] + old[IDX(i+1, j)] + old[IDX(i, j-1)] + old[IDX(i, j+1)];
+                    new[ IDX(i,j) ] = center * alpha + neighbors * constant;
+                }
+        }
+
+    #undef IDX
+    return 0;
+}
+
+inline int update_border( const int periodic, const vec2_t N, const plane_t *oldplane, plane_t *newplane ) {
+    const uint xsize = oldplane->size[_x_];
+    const uint ysize = oldplane->size[_y_];
+
+    const uint fxsize = xsize+2;
+
+    #define IDX( i, j ) ( (j)*fxsize + (i) )
+    
+    double * restrict old = oldplane->data;
+    double * restrict new = newplane->data;
+
+    // update only the border of the plane
+
+    // update the top and bottom borders
+    const double alpha = 0.6;
+    const double constant =  (1-alpha) / 4.0;
+
+    double center, neighbors;
+
+    #pragma omp parallel for schedule(static)
+    for ( uint i = 1; i <= xsize; i++ ) {
+        center = old[ IDX(i,1) ];
+        neighbors = old[IDX(i-1, 1)] + old[IDX(i+1, 1)] + old[IDX(i, 0)] + old[IDX(i, 2)];
+        new[ IDX(i,1) ] = center * alpha + neighbors * constant;
+
+        center = old[ IDX(i,ysize) ];
+        neighbors = old[IDX(i-1, ysize)] + old[IDX(i+1, ysize)] + old[IDX(i, ysize-1)] + old[IDX(i, ysize+1)];
+        new[ IDX(i,ysize) ] = center * alpha + neighbors * constant;
+    }
+
+    // update the left and right borders
+    #pragma omp parallel for schedule(static)
+    for ( uint j = 1; j <= ysize; j++ ) {
+        center = old[ IDX(1,j) ];
+        neighbors = old[IDX(0, j)] + old[IDX(2, j)] + old[IDX(1, j-1)] + old[IDX(1, j+1)];
+        new[ IDX(1,j) ] = center * alpha + neighbors * constant;
+
+        center = old[ IDX(xsize,j) ];
+        neighbors = old[IDX(xsize-1, j)] + old[IDX(xsize+1, j)] + old[IDX(xsize, j-1)] + old[IDX(xsize, j+1)];
+        new[ IDX(xsize,j) ] = center * alpha + neighbors * constant;
+    }
+
+    if ( periodic ) {
+        // if there is only a column of tasks, the periodicity on the X axis is local
+        if ( N[_x_] == 1 ) {
+            // copy the values of the first column to the right ghost column (xsize+1)
+            for ( uint j = 1; j <= ysize; j++ ) {
+                new[ IDX( 0, j) ]       = new[ IDX(xsize, j) ];
+                new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
+            }
+        }
+
+        // if there is only a row of tasks, the periodicity on the Y axis is local
+        if ( N[_y_] == 1 ) {
+            // copy the values of the first row to the bottom ghost row (ysize+1)
+            for ( uint i = 1; i <= xsize; i++ ) {
+                new[ IDX( i, 0 ) ]       = new[ IDX(i, ysize) ];
+                new[ IDX( i, ysize+1) ] = new[ IDX(i, 1) ];
+            }
+        }
+    }
+
+    #undef IDX
+    return 0;
+}
 
 inline int get_total_energy( plane_t *plane, double  *energy ) {
     /*
@@ -200,9 +311,13 @@ inline int get_total_energy( plane_t *plane, double  *energy ) {
     //       (ii) ask the compiler to do it
     // for instance
     // #pragma GCC unroll 4
-    for ( uint j = 1; j <= ysize; j++ )
+
+    #pragma omp parallel for reduction(+:totenergy) schedule(static)
+    for ( uint j = 1; j <= ysize; j++ ) {
+        #pragma GCC ivdep
         for ( uint i = 1; i <= xsize; i++ )
             totenergy += data[ IDX(i, j) ];
+    }
 
     
     #undef IDX
