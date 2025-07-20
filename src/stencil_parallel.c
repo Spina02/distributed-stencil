@@ -1,11 +1,17 @@
 #include "stencil_parallel.h"
+#include <ctype.h>
 
-int verbose = 0;
-int seed = 0; // default is random itself
+int verbose = 0; // whether to print verbose output
+int test = 0;   // whether we are running a scalability test
+int seed = 0; 	 // default is random itself
 
 //? ---------------------------------------------------------------
 //?                          Main function 
 //? ---------------------------------------------------------------
+
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 2
+void debug_print_merged_surface(int iter, plane_t *plane, int Rank, int Ntasks, vec2_t N, MPI_Comm *myCOMM_WORLD);
+#endif
 
 int main(int argc, char **argv) {
 
@@ -69,6 +75,7 @@ int main(int argc, char **argv) {
 	uint ysize = planes[current].size[_y_];
 	uint xsize = planes[current].size[_x_];
 	uint xframe = xsize + 2;
+	uint i;
 
 	init_time = MPI_Wtime() - init_time;
 	total_time = MPI_Wtime();
@@ -90,14 +97,14 @@ int main(int argc, char **argv) {
 		// Checking if buffers are allocated and neighbors exist
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[SEND][WEST] != NULL) {
 			#pragma GCC ivdep
-			for (uint i = 0; i < ysize; i++) {
+			for (i = 0; i < ysize; i++) {
 				// WEST: first effective column (excluding frame)
 				buffers[SEND][WEST][i] = planes[current].data[(i + 1) * xframe + 1];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[SEND][EAST] != NULL) {
 			#pragma GCC ivdep
-			for (uint i = 0; i < ysize; i++) {
+			for (i = 0; i < ysize; i++) {
 				// EAST: last effective column (excluding frame)
 				buffers[SEND][EAST][i] = planes[current].data[(i + 1) * xframe + xsize];
 			}
@@ -105,10 +112,6 @@ int main(int argc, char **argv) {
 		
 		
 		//? - - - - - - - - - - - perform the halo communications - - - - - - - - - -
-		
-		//     (1) use Send / Recv
-		//     (2) use Isend / Irecv
-		//         --> can you overlap communication and compution in this way?
 		
 		start_time_comm = MPI_Wtime();
 		
@@ -121,11 +124,12 @@ int main(int argc, char **argv) {
 			buffers[SEND][SOUTH] = &(planes[current].data[ysize * xframe + 1]); // the last effective row
 			buffers[RECV][SOUTH] = &(planes[current].data[(ysize + 1) * xframe + 1]);
 		}
+		
 		if (neighbours[EAST] != MPI_PROC_NULL) {
 			// optimization: if the neighbor is the same rank, we can just copy the data
 			if (neighbours[EAST] == Rank) {
 				#pragma GCC ivdep
-				for (uint i = 0; i < ysize; i++) {
+				for (i = 0; i < ysize; i++) {
 					buffers[RECV][EAST][i] = buffers[SEND][EAST][i];
 				}
 			} else {
@@ -136,7 +140,7 @@ int main(int argc, char **argv) {
 		if (neighbours[WEST] != MPI_PROC_NULL) {
 			if (neighbours[WEST] == Rank) {
 				#pragma GCC ivdep
-				for (uint i = 0; i < ysize; i++) {
+				for (i = 0; i < ysize; i++) {
 					buffers[RECV][WEST][i] = buffers[SEND][WEST][i];
 				}
 			} else {
@@ -147,7 +151,7 @@ int main(int argc, char **argv) {
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
 			if (neighbours[NORTH] == Rank) {
 				#pragma GCC ivdep
-				for (uint i = 0; i < xsize; i++) {
+				for (i = 0; i < xsize; i++) {
 					buffers[RECV][NORTH][i] = buffers[SEND][NORTH][i];
 				}
 			} else {
@@ -158,7 +162,7 @@ int main(int argc, char **argv) {
 		if (neighbours[SOUTH] != MPI_PROC_NULL) {
 			if (neighbours[SOUTH] == Rank) {
 				#pragma GCC ivdep
-				for (uint i = 0; i < xsize; i++) {
+				for (i = 0; i < xsize; i++) {
 					buffers[RECV][SOUTH][i] = buffers[SEND][SOUTH][i];
 				}
 			} else {
@@ -184,13 +188,13 @@ int main(int argc, char **argv) {
 
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[RECV][WEST] != NULL) {
 			#pragma GCC ivdep
-			for (uint i = 0; i < ysize; i++) {
+			for (i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + 0] = buffers[RECV][WEST][i];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[RECV][EAST] != NULL) {
 			#pragma GCC ivdep
-			for (uint i = 0; i < ysize; i++) {
+			for (i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + (xsize + 1)] = buffers[RECV][EAST][i];
 			}
 		}
@@ -203,208 +207,30 @@ int main(int argc, char **argv) {
 		comp_time += MPI_Wtime() - start_time_comp;
 
 
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 2
 		//! ------------------------- Print the surface at each step -------------------------
 		//!
 		//! warning:   this is a very slow operation, and should be used only for debugging
 		//!  		               since it looses the parallelization
 		//!
 		//! ----------------------------------------------------------------------------------
-#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 2
-		{
-			// Gather local grid sizes and data to rank 0
-			uint p_xsize = planes[!current].size[_x_];
-			uint p_ysize = planes[!current].size[_y_];
-			uint p_xframe = p_xsize + 2;
-			size_t local_size = p_xsize * p_ysize;
-
-			// Get the global grid decomposition
-			int Grid_x, Grid_y;
-			MPI_Comm_size(myCOMM_WORLD, &Ntasks);
-			MPI_Comm_rank(myCOMM_WORLD, &Rank);
-			Grid_x = (int)N[_x_];
-			Grid_y = (int)N[_y_];
-
-			// Special case: Ntasks == 1, just print the local grid directly
-			if (Ntasks == 1) {
-				printf("Merged Surface at step %d:\n\n", iter);
-				for (uint j = 0; j < p_ysize; j++) {
-					for (uint i = 0; i < p_xsize; i++) {
-						printf("%8.4f ", planes[!current].data[(j+1) * p_xframe + (i+1)]);
-					}
-					printf("\n");
-				}
-				printf("\n");
-			} else {
-				// Each rank sends its local grid size and data to rank 0
-				int *all_xsize = NULL, *all_ysize = NULL;
-				int *displs = NULL, *recvcounts = NULL;
-
-				if (Rank == 0) {
-					all_xsize = (int*)malloc((size_t)Ntasks * sizeof(int));
-					all_ysize = (int*)malloc((size_t)Ntasks * sizeof(int));
-				}
-				int my_sizes[2] = {(int)p_xsize, (int)p_ysize};
-				MPI_Gather(&my_sizes[0], 1, MPI_INT, all_xsize, 1, MPI_INT, 0, myCOMM_WORLD);
-				MPI_Gather(&my_sizes[1], 1, MPI_INT, all_ysize, 1, MPI_INT, 0, myCOMM_WORLD);
-
-				// Gather all local data to rank 0
-				double *localbuf = (double*)malloc(local_size * sizeof(double));
-				for (uint j = 0; j < p_ysize; j++)
-					for (uint i = 0; i < p_xsize; i++)
-						localbuf[j * p_xsize + i] = planes[!current].data[(j+1) * p_xframe + (i+1)];
-
-				// Compute displacements and receive counts for Gatherv
-				if (Rank == 0) {
-					recvcounts = (int*)malloc((size_t)Ntasks * sizeof(int));
-					displs = (int*)malloc((size_t)Ntasks * sizeof(int));
-					int offset = 0;
-					for (int r = 0; r < Ntasks; r++) {
-						recvcounts[r] = all_xsize[r] * all_ysize[r];
-						displs[r] = offset;
-						offset += recvcounts[r];
-					}
-				}
-				double *gathered = NULL;
-				if (Rank == 0) {
-					int total = 0;
-					for (int r = 0; r < Ntasks; r++) total += all_xsize[r] * all_ysize[r];
-					gathered = (double*)malloc((size_t)total * sizeof(double));
-				}
-				MPI_Gatherv(localbuf, (int)local_size, MPI_DOUBLE,
-				            gathered, recvcounts, displs, MPI_DOUBLE, 0, myCOMM_WORLD);
-				free(localbuf);
-
-				// Print the merged grid at rank 0
-				if (Rank == 0) {
-					// Compute the global grid size
-					int global_x = 0, global_y = 0;
-					for (int gx = 0; gx < Grid_x; gx++) global_x += all_xsize[gx];
-					for (int gy = 0; gy < Grid_y; gy++) global_y += all_ysize[gy * Grid_x];
-
-					// Build a map of where each rank's patch goes
-					int *x_offsets = (int*)malloc((size_t)Grid_x * sizeof(int));
-					int *y_offsets = (int*)malloc((size_t)Grid_y * sizeof(int));
-					x_offsets[0] = 0;
-					y_offsets[0] = 0;
-					for (int gx = 1; gx < Grid_x; gx++)
-						x_offsets[gx] = x_offsets[gx-1] + all_xsize[gx-1];
-					for (int gy = 1; gy < Grid_y; gy++)
-						y_offsets[gy] = y_offsets[gy-1] + all_ysize[(gy-1)*Grid_x];
-
-					// Allocate the global grid
-					double **global_grid = (double**)malloc((size_t)global_y * sizeof(double*));
-					for (int j = 0; j < global_y; j++)
-						global_grid[j] = (double*)malloc((size_t)global_x * sizeof(double));
-					// Fill with zeros
-					for (int j = 0; j < global_y; j++)
-						for (int i = 0; i < global_x; i++)
-							global_grid[j][i] = 0.0;
-
-					// Place each rank's patch in the global grid
-					int *patch_idx = (int*)malloc((size_t)Ntasks * sizeof(int));
-					for (int r = 0; r < Ntasks; r++) patch_idx[r] = 0;
-					for (int gy = 0; gy < Grid_y; gy++) {
-						for (int gx = 0; gx < Grid_x; gx++) {
-							int r = gy * Grid_x + gx;
-							int px = x_offsets[gx];
-							int py = y_offsets[gy];
-							int xs = all_xsize[r];
-							int ys = all_ysize[r];
-							int base = displs[r];
-							for (int j = 0; j < ys; j++) {
-								for (int i = 0; i < xs; i++) {
-									global_grid[py + j][px + i] = gathered[base + j * xs + i];
-								}
-							}
-						}
-					}
-
-					// Enhanced pretty-printing of the merged surface with improved grid lines and intersections
-					// Now using UTF-8 string literals for box-drawing characters to avoid multi-character constant warnings
-
-					printf("Merged Surface at step %d:\n\n", iter);
-
-					// Precompute vertical separator columns for each region
-					int *vert_seps = (int*)malloc(((size_t)Grid_x-1) * sizeof(int));
-					int sep_sum = 0;
-					for (int gx = 0; gx < Grid_x-1; gx++) {
-						sep_sum += all_xsize[gx];
-						vert_seps[gx] = sep_sum;
-					}
-
-					// Precompute horizontal separator rows for each region
-					int *horiz_seps = (int*)malloc(((size_t)Grid_y-1) * sizeof(int));
-					sep_sum = 0;
-					for (int gy = 0; gy < Grid_y-1; gy++) {
-						sep_sum += all_ysize[gy * Grid_x];
-						horiz_seps[gy] = sep_sum;
-					}
-
-					for (int j = 0; j < global_y; j++) {
-						for (int i = 0; i < global_x; i++) {
-							printf("%8.4f", global_grid[j][i]);
-							// Add vertical separator between task regions, aligned
-							for (int s = 0; s < Grid_x-1; s++) {
-								if (i + 1 == vert_seps[s]) {
-									printf(" │");
-									break;
-								}
-							}
-						}
-						printf("\n");
-						// Add horizontal separator between task regions, aligned
-						for (int s = 0; s < Grid_y-1; s++) {
-							if (j + 1 == horiz_seps[s]) {
-								// Print left margin to align with numbers
-								for (int i = 0; i < global_x; i++) {
-									if (i == 0) printf("  ───────");
-									else printf("────────");
-									// printf("──────");
-									// Add intersection or end
-									for (int t = 0; t < Grid_x-1; t++) {
-										if (i + 1 == vert_seps[t]) {
-											printf("┼─");
-											break;
-										}
-									}
-								}
-								printf("\n");
-								break;
-							}
-						}
-					}
-					printf("\n");
-
-					// Clean up
-					for (int j = 0; j < global_y; j++) free(global_grid[j]);
-					free(global_grid);
-					free(x_offsets);
-					free(y_offsets);
-					free(patch_idx);
-					free(all_xsize);
-					free(all_ysize);
-					free(recvcounts);
-					free(displs);
-					free(gathered);
-					free(vert_seps);
-					free(horiz_seps);
-				}
-				MPI_Barrier(myCOMM_WORLD);
-			}
-		}
+		debug_print_merged_surface(iter, &planes[!current], Rank, Ntasks, N, &myCOMM_WORLD);
 #endif
-		//! -------------------------------- End of printing ---------------------------------
 
 		//? - - - - - - - - - - - - - - output energy statistics - - - - - - - - - - - - - - -
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 1
 		if ( output_energy_stat_perstep )
-			output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+			output_energy_stat ( iter, &planes[!current], (iter+1) * Nsources*energy_per_source, Rank, &myCOMM_WORLD, S );
+#endif
 	
 		// swap plane indexes for the new iteration
 		current = !current;
       
     }
-  
 	total_time = MPI_Wtime() - total_time;
+	
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 1
+	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD, S );
 
 	if (Rank == 0) {
 		printf("Total time: %f\n", total_time);
@@ -417,20 +243,69 @@ int main(int argc, char **argv) {
 			total_time - comp_time - comm_time, 
 			((total_time - comp_time - comm_time)/total_time)*100.0);
 	}
-
-	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD );
+#endif
 	
-	memory_release( neighbours, buffers, planes, &Sources_local);
+
+	memory_release(neighbours, buffers, planes, &Sources_local);
 	
 	// Clean up the duplicated communicator
 	MPI_Comm_free(&myCOMM_WORLD);
 	
+	if (Rank == 0) {
+		
+		
+		if (test) {
+			
+		
+			// Get the necessary information
+			// Some are passed as arguments, others are passed through environment variables
+			const char* test_type = getenv("TEST_TYPE"); // es. "Strong", "Weak", "Omp"
+			int nodes = atoi(getenv("SLURM_NNODES"));
+			int total_tasks = atoi(getenv("SLURM_NTASKS"));
+			int tasks_per_node = atoi(getenv("SLURM_NTASKS_PER_NODE"));
+			int threads_per_task = atoi(getenv("OMP_NUM_THREADS"));
+
+			// create filename based on test_type
+			char* filename = malloc(strlen(test_type) + 20);
+			
+			sprintf(filename, "data/%s_results.csv", test_type);
+
+			// Open the file in append mode to add the results
+			FILE *results_file = fopen(filename, "a");
+			if (results_file == NULL) {
+				perror("Errore nell'apertura del file dei risultati");
+				// Gestisci l'errore
+			}
+		
+			// If the file is empty, write the header
+			fseek(results_file, 0, SEEK_END);
+			long size = ftell(results_file);
+			if (size == 0) {
+				fprintf(results_file, "TipoTest,Nodi,TaskTotali,TaskPerNodo,ThreadPerTask,DimX,DimY,Iterazioni,TempoTotale,TempoCalcolo,TempoComunicazione\n");
+			}
+
+			// Print the data row
+			fprintf(results_file, "%s,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f\n",
+					test_type ? test_type : "N/A",
+					nodes,
+					total_tasks,
+					tasks_per_node,
+					threads_per_task,
+					S[_x_], // The global X dimension
+					S[_y_], // The global Y dimension
+					Niterations, // The number of iterations
+					total_time,     // The total time measured
+					comp_time,   // The computation time measured
+					comm_time);     // The communication time measured
+		
+			fclose(results_file);
+		}
+	}
+
 	MPI_Finalize();
 	return 0;
 }
 
-
- 
 //? -------------------------------------------------------------------------
 //?                              initialization
 //? -------------------------------------------------------------------------
@@ -475,6 +350,7 @@ int initialize (
 	*Niterations      = 100;
 	*energy_per_source = 1.0;
 	*output_energy_stat = 0;
+	test = getenv("TEST_TYPE") != NULL;
 
 	if ( planes == NULL ) {
 			// manage the situation
@@ -1063,7 +939,8 @@ int memory_allocate (
   	return 0;
 }
 
-int output_energy_stat (int step, plane_t *plane, double budget, int Me, MPI_Comm *Comm) {
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 1
+int output_energy_stat (int step, plane_t *plane, double budget, int Me, MPI_Comm *Comm, vec2_t S) {
 
 	double system_energy = 0;
 	double tot_system_energy = 0;
@@ -1081,9 +958,199 @@ int output_energy_stat (int step, plane_t *plane, double budget, int Me, MPI_Com
 			"( in avg %g per grid point)\n",
 			budget,
 			tot_system_energy,
-			tot_system_energy / (plane->size[_x_]*plane->size[_y_]) 
+			tot_system_energy / (S[_x_]*S[_y_]) 
 		);
     }
-  
-  	return 0;
+	
+	return 0;
 }
+#endif
+
+//? -------------------------------------------------------------------------
+//?                              Debug functions
+//? -------------------------------------------------------------------------
+
+#if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 2
+void debug_print_merged_surface(int iter, plane_t *plane, int Rank, int Ntasks, vec2_t N, MPI_Comm *myCOMM_WORLD) {
+	// Gather local grid sizes and data to rank 0
+	uint p_xsize = plane->size[_x_];
+	uint p_ysize = plane->size[_y_];
+	uint p_xframe = p_xsize + 2;
+	size_t local_size = p_xsize * p_ysize;
+
+	// Get the global grid decomposition
+	int Grid_x, Grid_y;
+	MPI_Comm_size(*myCOMM_WORLD, &Ntasks);
+	MPI_Comm_rank(*myCOMM_WORLD, &Rank);
+	Grid_x = (int)N[_x_];
+	Grid_y = (int)N[_y_];
+
+	// Special case: Ntasks == 1, just print the local grid directly
+	if (Ntasks == 1) {
+		printf("Merged Surface at step %d:\n\n", iter);
+		for (uint j = 0; j < p_ysize; j++) {
+			for (uint i = 0; i < p_xsize; i++) {
+				printf("%8.4f ", plane->data[(j+1) * p_xframe + (i+1)]);
+			}
+			printf("\n");
+		}
+		printf("\n");
+	} else {
+		// Each rank sends its local grid size and data to rank 0
+		int *all_xsize = NULL, *all_ysize = NULL;
+		int *displs = NULL, *recvcounts = NULL;
+
+		if (Rank == 0) {
+			all_xsize = (int*)malloc((size_t)Ntasks * sizeof(int));
+			all_ysize = (int*)malloc((size_t)Ntasks * sizeof(int));
+		}
+		int my_sizes[2] = {(int)p_xsize, (int)p_ysize};
+		MPI_Gather(&my_sizes[0], 1, MPI_INT, all_xsize, 1, MPI_INT, 0, *myCOMM_WORLD);
+		MPI_Gather(&my_sizes[1], 1, MPI_INT, all_ysize, 1, MPI_INT, 0, *myCOMM_WORLD);
+
+		// Gather all local data to rank 0
+		double *localbuf = (double*)malloc(local_size * sizeof(double));
+		for (uint j = 0; j < p_ysize; j++)
+			for (uint i = 0; i < p_xsize; i++)
+				localbuf[j * p_xsize + i] = plane->data[(j+1) * p_xframe + (i+1)];
+
+		// Compute displacements and receive counts for Gatherv
+		if (Rank == 0) {
+			recvcounts = (int*)malloc((size_t)Ntasks * sizeof(int));
+			displs = (int*)malloc((size_t)Ntasks * sizeof(int));
+			int offset = 0;
+			for (int r = 0; r < Ntasks; r++) {
+				recvcounts[r] = all_xsize[r] * all_ysize[r];
+				displs[r] = offset;
+				offset += recvcounts[r];
+			}
+		}
+		double *gathered = NULL;
+		if (Rank == 0) {
+			int total = 0;
+			for (int r = 0; r < Ntasks; r++) total += all_xsize[r] * all_ysize[r];
+			gathered = (double*)malloc((size_t)total * sizeof(double));
+		}
+		MPI_Gatherv(localbuf, (int)local_size, MPI_DOUBLE,
+		            gathered, recvcounts, displs, MPI_DOUBLE, 0, *myCOMM_WORLD);
+		free(localbuf);
+
+		// Print the merged grid at rank 0
+		if (Rank == 0) {
+			// Compute the global grid size
+			int global_x = 0, global_y = 0;
+			for (int gx = 0; gx < Grid_x; gx++) global_x += all_xsize[gx];
+			for (int gy = 0; gy < Grid_y; gy++) global_y += all_ysize[gy * Grid_x];
+
+			// Build a map of where each rank's patch goes
+			int *x_offsets = (int*)malloc((size_t)Grid_x * sizeof(int));
+			int *y_offsets = (int*)malloc((size_t)Grid_y * sizeof(int));
+			x_offsets[0] = 0;
+			y_offsets[0] = 0;
+			for (int gx = 1; gx < Grid_x; gx++)
+				x_offsets[gx] = x_offsets[gx-1] + all_xsize[gx-1];
+			for (int gy = 1; gy < Grid_y; gy++)
+				y_offsets[gy] = y_offsets[gy-1] + all_ysize[(gy-1)*Grid_x];
+
+			// Allocate the global grid
+			double **global_grid = (double**)malloc((size_t)global_y * sizeof(double*));
+			for (int j = 0; j < global_y; j++)
+				global_grid[j] = (double*)malloc((size_t)global_x * sizeof(double));
+			// Fill with zeros
+			for (int j = 0; j < global_y; j++)
+				for (int i = 0; i < global_x; i++)
+					global_grid[j][i] = 0.0;
+
+			// Place each rank's patch in the global grid
+			int *patch_idx = (int*)malloc((size_t)Ntasks * sizeof(int));
+			for (int r = 0; r < Ntasks; r++) patch_idx[r] = 0;
+			for (int gy = 0; gy < Grid_y; gy++) {
+				for (int gx = 0; gx < Grid_x; gx++) {
+					int r = gy * Grid_x + gx;
+					int px = x_offsets[gx];
+					int py = y_offsets[gy];
+					int xs = all_xsize[r];
+					int ys = all_ysize[r];
+					int base = displs[r];
+					for (int j = 0; j < ys; j++) {
+						for (int i = 0; i < xs; i++) {
+							global_grid[py + j][px + i] = gathered[base + j * xs + i];
+						}
+					}
+				}
+			}
+
+			// Enhanced pretty-printing of the merged surface with improved grid lines and intersections
+			// Now using UTF-8 string literals for box-drawing characters to avoid multi-character constant warnings
+
+			printf("Merged Surface at step %d:\n\n", iter);
+
+			// Precompute vertical separator columns for each region
+			int *vert_seps = (int*)malloc(((size_t)Grid_x-1) * sizeof(int));
+			int sep_sum = 0;
+			for (int gx = 0; gx < Grid_x-1; gx++) {
+				sep_sum += all_xsize[gx];
+				vert_seps[gx] = sep_sum;
+			}
+
+			// Precompute horizontal separator rows for each region
+			int *horiz_seps = (int*)malloc(((size_t)Grid_y-1) * sizeof(int));
+			sep_sum = 0;
+			for (int gy = 0; gy < Grid_y-1; gy++) {
+				sep_sum += all_ysize[gy * Grid_x];
+				horiz_seps[gy] = sep_sum;
+			}
+
+			for (int j = 0; j < global_y; j++) {
+				for (int i = 0; i < global_x; i++) {
+					printf("%8.4f", global_grid[j][i]);
+					// Add vertical separator between task regions, aligned
+					for (int s = 0; s < Grid_x-1; s++) {
+						if (i + 1 == vert_seps[s]) {
+							printf(" │");
+							break;
+						}
+					}
+				}
+				printf("\n");
+				// Add horizontal separator between task regions, aligned
+				for (int s = 0; s < Grid_y-1; s++) {
+					if (j + 1 == horiz_seps[s]) {
+						// Print left margin to align with numbers
+						for (int i = 0; i < global_x; i++) {
+							if (i == 0) printf("  ───────");
+							else printf("────────");
+							// printf("──────");
+							// Add intersection or end
+							for (int t = 0; t < Grid_x-1; t++) {
+								if (i + 1 == vert_seps[t]) {
+									printf("┼─");
+									break;
+								}
+							}
+						}
+						printf("\n");
+						break;
+					}
+				}
+			}
+			printf("\n");
+
+			// Clean up
+			for (int j = 0; j < global_y; j++) free(global_grid[j]);
+			free(global_grid);
+			free(x_offsets);
+			free(y_offsets);
+			free(patch_idx);
+			free(all_xsize);
+			free(all_ysize);
+			free(recvcounts);
+			free(displs);
+			free(gathered);
+			free(vert_seps);
+			free(horiz_seps);
+		}
+		MPI_Barrier(*myCOMM_WORLD);
+	}
+}
+#endif

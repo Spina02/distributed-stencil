@@ -53,7 +53,7 @@ int initialize (MPI_Comm *, int, int, int, char**, vec2_t*, vec2_t*, int*, int*,
 
 int memory_release (const int *, buffers_t *, plane_t *, vec2_t **);
 
-int output_energy_stat (int, plane_t *, double, int, MPI_Comm *);
+int output_energy_stat (int, plane_t *, double, int, MPI_Comm *, vec2_t);
 
 
 //? ======================= function definition for inline functions =======================
