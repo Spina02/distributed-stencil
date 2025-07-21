@@ -5,7 +5,7 @@ echo "Submitting Strong Scaling jobs..."
 TASKS_PER_NODE=8
 CPUS_PER_TASK=14
 GRID_SIZE=16384 #2^14
-N_STEPS=200
+N_STEPS=500
 PARAMS="-x ${GRID_SIZE} -y ${GRID_SIZE} -n ${N_STEPS}"
 
 for nodes in 1 2 4 8 16; do
@@ -17,8 +17,8 @@ for nodes in 1 2 4 8 16; do
            --ntasks-per-node=${TASKS_PER_NODE} \
            --cpus-per-task=${CPUS_PER_TASK} \
            --job-name=${JOB_NAME} \
-           --export=ALL,PROGRAM_ARGS="${PARAMS}", TEST_TYPE="strong" \
-           go_dcgp.sbatch
+           --export=ALL,PROGRAM_ARGS="${PARAMS}",TEST_TYPE="strong" \
+           scripts/go_dcgp.sbatch
 done
 
 echo "All Strong Scaling jobs submitted."

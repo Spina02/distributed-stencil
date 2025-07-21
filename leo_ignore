@@ -1,4 +1,15 @@
 build/
+assignment/
+analysis/
+plots/
+data/
+.gitignore
+.git/
+LICENSE
+*.md
+*.pdf
+*.csv
+*.png
 
 local*
 

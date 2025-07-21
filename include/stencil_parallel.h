@@ -128,10 +128,12 @@ inline int update_plane (
 
         const double alpha = 0.6;
         const double constant =  (1-alpha) / 4.0;
+
+        uint i, j;
         
-        #pragma omp parallel for schedule(static) collapse(2)
-        for (uint j = 1; j <= ysize; j++) {
-            for ( uint i = 1; i <= xsize; i++)
+        #pragma omp parallel for schedule(static)
+        for (j = 1; j <= ysize; j++) {
+            for ( i = 1; i <= xsize; i++)
                 {
                     // NOTE: (i-1,j), (i+1,j), (i,j-1) and (i,j+1) always exist even
                     //       if this patch is at some border without periodic conditions;
@@ -151,7 +153,7 @@ inline int update_plane (
             if ( N[_x_] == 1 ) {
                 // copy the values of the first column to the right ghost column (xsize+1)
                 // and the values of the last column to the left ghost column (0)
-                for ( uint j = 1; j <= ysize; j++ ) {
+                for (j = 1; j <= ysize; j++ ) {
                     new[ IDX( 0, j) ]       = new[ IDX(xsize, j) ];
                     new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
                 }
@@ -161,7 +163,7 @@ inline int update_plane (
             if ( N[_y_] == 1 ) {
                 // copy the values of the first row to the bottom ghost row (ysize+1)
                 // and the values of the last row to the top ghost row (0)
-                for ( uint i = 1; i <= xsize; i++ ) {
+                for (i = 1; i <= xsize; i++ ) {
                     new[ IDX( i, 0 ) ]       = new[ IDX(i, ysize) ];
                     new[ IDX( i, ysize+1) ] = new[ IDX(i, 1) ];
                 }
@@ -187,11 +189,6 @@ inline int update_internal(
         // HINT: you may attempt to
         //       (i)  manually unroll the loop
         //       (ii) ask the compiler to do it
-        // for instance
-        // #pragma GCC unroll 4
-        //
-        // HINT: in any case, this loop is a good candidate
-        //       for openmp parallelization
 
         double * restrict old = oldplane->data;
         double * restrict new = newplane->data;
@@ -199,9 +196,11 @@ inline int update_internal(
         const double alpha = 0.6;
         const double constant =  (1-alpha) / 4.0;
         
-        #pragma omp parallel for schedule(static) collapse(2)
-        for (uint j = 2; j <= ysize-1; j++) {
-            for ( uint i = 2; i <= xsize-1; i++)
+        uint i, j;
+
+        #pragma omp parallel for simd schedule(static)
+        for (j = 2; j <= ysize-1; j++) {
+            for ( i = 2; i <= xsize-1; i++)
                 {
                     // NOTE: (i-1,j), (i+1,j), (i,j-1) and (i,j+1) always exist even
                     //       if this patch is at some border without periodic conditions;
@@ -233,14 +232,15 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
 
     // update only the border of the plane
 
-    // update the top and bottom borders
     const double alpha = 0.6;
     const double constant =  (1-alpha) / 4.0;
-
+    
     double center, neighbors;
-
-    #pragma omp parallel for schedule(static)
-    for ( uint i = 1; i <= xsize; i++ ) {
+    
+    uint i, j;
+    
+    // update the top and bottom borders
+    for ( i = 1; i <= xsize; i++ ) {
         center = old[ IDX(i,1) ];
         neighbors = old[IDX(i-1, 1)] + old[IDX(i+1, 1)] + old[IDX(i, 0)] + old[IDX(i, 2)];
         new[ IDX(i,1) ] = center * alpha + neighbors * constant;
@@ -251,8 +251,7 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
     }
 
     // update the left and right borders
-    #pragma omp parallel for schedule(static)
-    for ( uint j = 1; j <= ysize; j++ ) {
+    for ( j = 1; j <= ysize; j++ ) {
         center = old[ IDX(1,j) ];
         neighbors = old[IDX(0, j)] + old[IDX(2, j)] + old[IDX(1, j-1)] + old[IDX(1, j+1)];
         new[ IDX(1,j) ] = center * alpha + neighbors * constant;
@@ -266,7 +265,7 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
         // if there is only a column of tasks, the periodicity on the X axis is local
         if ( N[_x_] == 1 ) {
             // copy the values of the first column to the right ghost column (xsize+1)
-            for ( uint j = 1; j <= ysize; j++ ) {
+            for ( j = 1; j <= ysize; j++ ) {
                 new[ IDX( 0, j) ]       = new[ IDX(xsize, j) ];
                 new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
             }
@@ -275,7 +274,7 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
         // if there is only a row of tasks, the periodicity on the Y axis is local
         if ( N[_y_] == 1 ) {
             // copy the values of the first row to the bottom ghost row (ysize+1)
-            for ( uint i = 1; i <= xsize; i++ ) {
+            for ( i = 1; i <= xsize; i++ ) {
                 new[ IDX( i, 0 ) ]       = new[ IDX(i, ysize) ];
                 new[ IDX( i, ysize+1) ] = new[ IDX(i, 1) ];
             }
@@ -306,16 +305,11 @@ inline int get_total_energy( plane_t *plane, double  *energy ) {
         double totenergy = 0;    
     #endif
 
-    // HINT: you may attempt to
-    //       (i)  manually unroll the loop
-    //       (ii) ask the compiler to do it
-    // for instance
-    // #pragma GCC unroll 4
+    uint i, j;
 
     #pragma omp parallel for reduction(+:totenergy) schedule(static)
-    for ( uint j = 1; j <= ysize; j++ ) {
-        #pragma GCC ivdep
-        for ( uint i = 1; i <= xsize; i++ )
+    for ( j = 1; j <= ysize; j++ ) {
+        for ( i = 1; i <= xsize; i++ )
             totenergy += data[ IDX(i, j) ];
     }
 

@@ -6,7 +6,7 @@
 
 #SBATCH --partition dcgp_usr_prod
 #SBATCH -A uTS25_Tornator_0
-#SBATCH -t [00:10:00]
+#SBATCH -t 00:10:00
 #SBATCH --job-name=stencil_job
 #SBATCH --exclusive
 #SBATCH --mem=0
@@ -23,9 +23,10 @@
 #           Executable and Modules
 # =======================================================
 
-EXEC=../build/stencil_parallel
+EXEC=build/stencil_parallel
 
-module load gcc/12.2.0
+# Unload any existing gcc module first to avoid conflicts
+module purge
 module load openmpi/4.1.6--gcc--12.2.0
 
 # =======================================================
@@ -48,10 +49,21 @@ echo "Total MPI tasks: ${SLURM_NTASKS}"
 echo "Tasks per node: ${SLURM_NTASKS_PER_NODE}"
 echo "CPUs per task (OMP_NUM_THREADS): ${SLURM_CPUS_PER_TASK}"
 echo "Program arguments: ${PROGRAM_ARGS}"
-echo "----------------------------------------------------"
 
 # =======================================================
 #                     Run the Program
 # =======================================================
 
-mpirun -np ${SLURM_NTASKS} ${EXEC} ${PROGRAM_ARGS}
+if [ "$TEST_TYPE" = "omp" ]; then
+    ${EXEC} ${PROGRAM_ARGS}
+else
+    mpirun -np ${SLURM_NTASKS} ${EXEC} ${PROGRAM_ARGS}
+fi
+
+# =======================================================
+#                     Print Results
+# =======================================================
+
+echo ""
+echo "Job completed successfully"
+echo "----------------------------------------------------"

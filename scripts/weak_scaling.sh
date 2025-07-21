@@ -4,8 +4,8 @@ echo "Submitting Weak Scaling jobs..."
 
 TASKS_PER_NODE=8
 CPUS_PER_TASK=14
-LOCAL_SIZE=2048 # single node grid size
-N_STEPS=200
+LOCAL_SIZE=4096 # single node grid size
+N_STEPS=500
 
 
 for nodes in 1 2 4 8 16; do
@@ -31,8 +31,8 @@ for nodes in 1 2 4 8 16; do
            --ntasks-per-node=${TASKS_PER_NODE} \
            --cpus-per-task=${CPUS_PER_TASK} \
            --job-name=${JOB_NAME} \
-           --export=ALL,PROGRAM_ARGS="${PARAMS}", TEST_TYPE="weak" \
-           go_dcgp.sbatch
+           --export=ALL,PROGRAM_ARGS="${PARAMS}",TEST_TYPE="weak" \
+           scripts/go_dcgp.sbatch
 done
 
 echo "All Weak Scaling jobs submitted."

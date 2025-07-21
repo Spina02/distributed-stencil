@@ -19,14 +19,14 @@ BASE_CFLAGS = -std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wuninitialized -W
 PEDANTIC_OVERRIDES = -Wno-pointer-sign
 MATH_LIBS = -lm
 
-# Optimization flags (your current setup)
-OPT_CFLAGS = -Ofast -march=native -flto -fopenmp
+# Optimization flags
+OPT_CFLAGS = -Ofast -march=icelake-server -flto -fopenmp
 
 # Debug flags
 DEBUG_CFLAGS = -g -O0 -DDEBUG
 
-# Release flags (your current setup)
-RELEASE_CFLAGS = $(OPT_CFLAGS) -g
+# Release flags
+RELEASE_CFLAGS = $(OPT_CFLAGS)
 
 # Verbose flags (compile-time verbosity control)
 VERBOSE_1_CFLAGS = $(OPT_CFLAGS) -g -DVERBOSE_LEVEL=1
@@ -44,12 +44,12 @@ all: serial stencil_parallel
 serial: $(BUILDDIR)/serial
 
 $(BUILDDIR)/serial: $(SRCDIR)/stencil_serial.c $(INCDIR)/stencil_serial.h | $(BUILDDIR)
-	$(CC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(RELEASE_CFLAGS) $(INCLUDES) -o $@ $< $(MATH_LIBS)
+	$(CC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(INCLUDES) -o $@ $< $(MATH_LIBS) $(RELEASE_CFLAGS)
 
 stencil_parallel: $(BUILDDIR)/stencil_parallel
 
 $(BUILDDIR)/stencil_parallel: $(SRCDIR)/stencil_parallel.c $(INCDIR)/stencil_parallel.h | $(BUILDDIR)
-	$(MPICC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(RELEASE_CFLAGS) $(INCLUDES) -o $@ $< $(MATH_LIBS)
+	$(MPICC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(INCLUDES) -o $@ $< $(MATH_LIBS) $(RELEASE_CFLAGS)
 
 # Debug builds
 debug: serial_debug stencil_parallel_debug
@@ -108,12 +108,12 @@ baseline: baseline_serial baseline_parallel
 baseline_serial: $(BUILDDIR)/baseline_serial
 
 $(BUILDDIR)/baseline_serial: $(BASELINE_SRCDIR)/stencil_template_serial.c $(BASELINE_INCDIR)/stencil_template_serial.h | $(BUILDDIR)
-	$(CC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(RELEASE_CFLAGS) $(BASELINE_INCLUDES) -o $@ $< $(MATH_LIBS)
+	$(CC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(BASELINE_INCLUDES) -o $@ $< $(MATH_LIBS) $(RELEASE_CFLAGS)
 
 baseline_parallel: $(BUILDDIR)/baseline_parallel
 
 $(BUILDDIR)/baseline_parallel: $(BASELINE_SRCDIR)/stencil_template_parallel.c $(BASELINE_INCDIR)/stencil_template_parallel.h | $(BUILDDIR)
-	$(MPICC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(RELEASE_CFLAGS) $(BASELINE_INCLUDES) -o $@ $< $(MATH_LIBS)
+	$(MPICC) $(BASE_CFLAGS) $(PEDANTIC_OVERRIDES) $(BASELINE_INCLUDES) -o $@ $< $(MATH_LIBS) $(RELEASE_CFLAGS)
 
 # Clean targets
 clean:

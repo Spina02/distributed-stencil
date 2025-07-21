@@ -1,5 +1,6 @@
 #include "stencil_parallel.h"
 #include <ctype.h>
+#include <errno.h>
 
 int verbose = 0; // whether to print verbose output
 int test = 0;   // whether we are running a scalability test
@@ -231,8 +232,15 @@ int main(int argc, char **argv) {
 	
 #if defined(VERBOSE_LEVEL) && VERBOSE_LEVEL >= 1
 	output_energy_stat ( -1, &planes[current], Niterations * Nsources*energy_per_source, Rank, &myCOMM_WORLD, S );
+#endif
 
+	memory_release(neighbours, buffers, planes, &Sources_local);
+	
+	// Clean up the duplicated communicator
+	MPI_Comm_free(&myCOMM_WORLD);
+	
 	if (Rank == 0) {
+
 		printf("Total time: %f\n", total_time);
 		printf("Initialization time: %f\n", init_time);
 		printf("Computation time: %f\n", comp_time);
@@ -242,51 +250,64 @@ int main(int argc, char **argv) {
 		printf("Other time (overhead): %f (%.2f%%)\n", 
 			total_time - comp_time - comm_time, 
 			((total_time - comp_time - comm_time)/total_time)*100.0);
-	}
-#endif
-	
 
-	memory_release(neighbours, buffers, planes, &Sources_local);
-	
-	// Clean up the duplicated communicator
-	MPI_Comm_free(&myCOMM_WORLD);
-	
-	if (Rank == 0) {
-		
-		
+
 		if (test) {
 			
-		
 			// Get the necessary information
 			// Some are passed as arguments, others are passed through environment variables
 			const char* test_type = getenv("TEST_TYPE"); // es. "Strong", "Weak", "Omp"
-			int nodes = atoi(getenv("SLURM_NNODES"));
-			int total_tasks = atoi(getenv("SLURM_NTASKS"));
-			int tasks_per_node = atoi(getenv("SLURM_NTASKS_PER_NODE"));
-			int threads_per_task = atoi(getenv("OMP_NUM_THREADS"));
+			const char* nodes_str = getenv("SLURM_NNODES");
+			const char* total_tasks_str = getenv("SLURM_NTASKS");
+			const char* tasks_per_node_str = getenv("SLURM_NTASKS_PER_NODE");
+			const char* threads_per_task_str = getenv("OMP_NUM_THREADS");
+			
+			// Check if test_type is valid
+			if (test_type == NULL) {
+				printf("Error: TEST_TYPE environment variable not set\n");
+				return 1;
+			}
+			
+			// Safely convert environment variables to integers
+			int nodes = nodes_str ? atoi(nodes_str) : 0;
+			int total_tasks = total_tasks_str ? atoi(total_tasks_str) : 0;
+			int tasks_per_node = tasks_per_node_str ? atoi(tasks_per_node_str) : 0;
+			int threads_per_task = threads_per_task_str ? atoi(threads_per_task_str) : 0;
 
 			// create filename based on test_type
 			char* filename = malloc(strlen(test_type) + 20);
+			if (filename == NULL) {
+				printf("Error: failed to allocate memory for filename\n");
+				return 1;
+			}
 			
 			sprintf(filename, "data/%s_results.csv", test_type);
+
+			// Create data directory if it doesn't exist
+			#ifdef _WIN32
+			system("mkdir data 2>nul");
+			#else
+			system("mkdir -p data 2>/dev/null");
+			#endif
 
 			// Open the file in append mode to add the results
 			FILE *results_file = fopen(filename, "a");
 			if (results_file == NULL) {
-				perror("Errore nell'apertura del file dei risultati");
-				// Gestisci l'errore
+				printf("Error opening results file: %s\n", strerror(errno));
+				free(filename);
+				return 1;
 			}
 		
 			// If the file is empty, write the header
 			fseek(results_file, 0, SEEK_END);
 			long size = ftell(results_file);
 			if (size == 0) {
-				fprintf(results_file, "TipoTest,Nodi,TaskTotali,TaskPerNodo,ThreadPerTask,DimX,DimY,Iterazioni,TempoTotale,TempoCalcolo,TempoComunicazione\n");
+				fprintf(results_file, "TestType,Nodes,TotalTasks,TasksPerNode,ThreadsPerTask,XDim,YDim,Iterations,TotalTime,ComputationTime,CommunicationTime\n");
 			}
 
 			// Print the data row
 			fprintf(results_file, "%s,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f\n",
-					test_type ? test_type : "N/A",
+					test_type,
 					nodes,
 					total_tasks,
 					tasks_per_node,
@@ -299,6 +320,7 @@ int main(int argc, char **argv) {
 					comm_time);     // The communication time measured
 		
 			fclose(results_file);
+			free(filename);
 		}
 	}
 
@@ -862,7 +884,13 @@ int memory_allocate (
 		return 1;
 	}
 	
-	memset(planes_ptr[OLD].data, 0, frame_size * sizeof(double));
+	// memset(planes_ptr[OLD].data, 0, frame_size * sizeof(double));
+
+	//? first-touch allocation
+	#pragma omp parallel for schedule(static)
+	for (unsigned int i = 0; i < frame_size; i++) {
+		planes_ptr[OLD].data[i] = 0.0;
+	}
 	
 	planes_ptr[NEW].data = (double*)aligned_alloc(64, frame_size * sizeof(double));
 	if ( planes_ptr[NEW].data == NULL ) {
@@ -871,7 +899,11 @@ int memory_allocate (
 		return 1;
 	}
 
-	memset(planes_ptr[NEW].data, 0, frame_size * sizeof(double));
+	// memset(planes_ptr[NEW].data, 0, frame_size * sizeof(double));
+	#pragma omp parallel for schedule(static)
+	for (unsigned int i = 0; i < frame_size; i++) {
+		planes_ptr[NEW].data[i] = 0.0;
+	}
 
 	planes_ptr[OLD].size[_x_] = xsize;
 	planes_ptr[OLD].size[_y_] = ysize;
