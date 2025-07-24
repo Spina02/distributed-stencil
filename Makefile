@@ -20,7 +20,15 @@ PEDANTIC_OVERRIDES = -Wno-pointer-sign
 MATH_LIBS = -lm
 
 # Optimization flags
-OPT_CFLAGS = -Ofast -march=icelake-server -flto -fopenmp
+OPT_CFLAGS = -Ofast -flto -fopenmp
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+	ARCH := native
+else
+	ARCH := icelake-server
+endif
+OPT_CFLAGS += -march=$(ARCH)
 
 # Debug flags
 DEBUG_CFLAGS = -g -O0 -DDEBUG
