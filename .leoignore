@@ -2,9 +2,11 @@ build/
 assignment/
 analysis/
 plots/
-data/
+data*/
+slides/
 .gitignore
 .git/
+*bkp*
 LICENSE
 *.md
 *.pdf

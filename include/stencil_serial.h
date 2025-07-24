@@ -38,7 +38,7 @@ typedef unsigned int uint;
 
 //? ======================= function prototypes =======================
 
-int initialize (int, char**, int*, int*, int*, int*, int**, double*, double**, int*, int*);
+int initialize (int, char**, int*, int*, int*, int*, int**, double*, double**, int*, int*, int*);
 
 int memory_release ( double*, int* );
 
@@ -157,8 +157,6 @@ inline int update_plane (const int periodic, const int size[2], const double *ol
 
    #undef IDX
 }
-
- 
 
 inline int get_total_energy( const int size[2], const double *plane, double *energy ) {
     /*

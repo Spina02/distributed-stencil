@@ -97,14 +97,12 @@ int main(int argc, char **argv) {
 		
 		// Checking if buffers are allocated and neighbors exist
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[SEND][WEST] != NULL) {
-			#pragma GCC ivdep
 			for (i = 0; i < ysize; i++) {
 				// WEST: first effective column (excluding frame)
 				buffers[SEND][WEST][i] = planes[current].data[(i + 1) * xframe + 1];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[SEND][EAST] != NULL) {
-			#pragma GCC ivdep
 			for (i = 0; i < ysize; i++) {
 				// EAST: last effective column (excluding frame)
 				buffers[SEND][EAST][i] = planes[current].data[(i + 1) * xframe + xsize];
@@ -129,7 +127,6 @@ int main(int argc, char **argv) {
 		if (neighbours[EAST] != MPI_PROC_NULL) {
 			// optimization: if the neighbor is the same rank, we can just copy the data
 			if (neighbours[EAST] == Rank) {
-				#pragma GCC ivdep
 				for (i = 0; i < ysize; i++) {
 					buffers[RECV][EAST][i] = buffers[SEND][EAST][i];
 				}
@@ -140,7 +137,6 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[WEST] != MPI_PROC_NULL) {
 			if (neighbours[WEST] == Rank) {
-				#pragma GCC ivdep
 				for (i = 0; i < ysize; i++) {
 					buffers[RECV][WEST][i] = buffers[SEND][WEST][i];
 				}
@@ -151,7 +147,6 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[NORTH] != MPI_PROC_NULL) {
 			if (neighbours[NORTH] == Rank) {
-				#pragma GCC ivdep
 				for (i = 0; i < xsize; i++) {
 					buffers[RECV][NORTH][i] = buffers[SEND][NORTH][i];
 				}
@@ -162,7 +157,6 @@ int main(int argc, char **argv) {
 		}
 		if (neighbours[SOUTH] != MPI_PROC_NULL) {
 			if (neighbours[SOUTH] == Rank) {
-				#pragma GCC ivdep
 				for (i = 0; i < xsize; i++) {
 					buffers[RECV][SOUTH][i] = buffers[SEND][SOUTH][i];
 				}
@@ -188,13 +182,11 @@ int main(int argc, char **argv) {
 		//? - - - - - - - - - - - - - - copy the haloes data - - - - - - - - - - - - - -
 
 		if (neighbours[WEST] != MPI_PROC_NULL && buffers[RECV][WEST] != NULL) {
-			#pragma GCC ivdep
 			for (i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + 0] = buffers[RECV][WEST][i];
 			}
 		}
 		if (neighbours[EAST] != MPI_PROC_NULL && buffers[RECV][EAST] != NULL) {
-			#pragma GCC ivdep
 			for (i = 0; i < ysize; i++) {
 				planes[current].data[(i + 1) * xframe + (xsize + 1)] = buffers[RECV][EAST][i];
 			}
@@ -235,16 +227,21 @@ int main(int argc, char **argv) {
 #endif
 
 	memory_release(neighbours, buffers, planes, &Sources_local);
+
+	double max_comp_time, max_comm_time;
+	MPI_Reduce(&comp_time, &max_comp_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD);
+	MPI_Reduce(&comm_time, &max_comm_time, 1, MPI_DOUBLE, MPI_MAX, 0, myCOMM_WORLD);
 	
 	// Clean up the duplicated communicator
 	MPI_Comm_free(&myCOMM_WORLD);
+
 	
 	if (Rank == 0) {
 
 		printf("Total time: %f\n", total_time);
 		printf("Initialization time: %f\n", init_time);
-		printf("Computation time: %f\n", comp_time);
-		printf("Communication time: %f\n", comm_time);
+		printf("Computation time: %f\n", max_comp_time);
+		printf("Communication time: %f\n", max_comm_time);
 		printf("Communication/Total ratio: %.2f%%\n", (comm_time/total_time)*100.0);
 		printf("Computation/Total ratio: %.2f%%\n", (comp_time/total_time)*100.0);
 		printf("Other time (overhead): %f (%.2f%%)\n", 
@@ -316,8 +313,8 @@ int main(int argc, char **argv) {
 					S[_y_], // The global Y dimension
 					Niterations, // The number of iterations
 					total_time,     // The total time measured
-					comp_time,   // The computation time measured
-					comm_time);     // The communication time measured
+					max_comp_time,   // The computation time measured
+					max_comm_time);     // The communication time measured
 		
 			fclose(results_file);
 			free(filename);
@@ -1112,9 +1109,6 @@ void debug_print_merged_surface(int iter, plane_t *plane, int Rank, int Ntasks, 
 				}
 			}
 
-			// Enhanced pretty-printing of the merged surface with improved grid lines and intersections
-			// Now using UTF-8 string literals for box-drawing characters to avoid multi-character constant warnings
-
 			printf("Merged Surface at step %d:\n\n", iter);
 
 			// Precompute vertical separator columns for each region
@@ -1152,7 +1146,6 @@ void debug_print_merged_surface(int iter, plane_t *plane, int Rank, int Ntasks, 
 						for (int i = 0; i < global_x; i++) {
 							if (i == 0) printf("  ───────");
 							else printf("────────");
-							// printf("──────");
 							// Add intersection or end
 							for (int t = 0; t < Grid_x-1; t++) {
 								if (i + 1 == vert_seps[t]) {

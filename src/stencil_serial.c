@@ -9,7 +9,10 @@
 
  int verbose = 0;
  
- int dump ( const double *, const uint [2], const char *, double *, double * );
+ // New global variable for the CSV save flag
+int save_csv = 0;
+
+int dump ( const double *, const uint [2], const char *, double *, double * );
 
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
@@ -31,11 +34,15 @@ int main(int argc, char **argv) {
 
 	int injection_frequency;
 	int output_energy_at_steps = 0;
+	// Local variable for the csv flag
+	int save_csv_local = 0;
 	
 	/* argument checking and setting */
 	initialize ( argc, argv, &S[0], &periodic, &Niterations,
 		&Nsources, &Sources, &energy_per_source, &planes[0],
-		&output_energy_at_steps, &injection_frequency );
+		&output_energy_at_steps, &injection_frequency, &save_csv_local );
+
+	save_csv = save_csv_local;
 
 	int current = OLD;
 
@@ -103,6 +110,25 @@ int main(int argc, char **argv) {
 
 	printf("Execution time: %f seconds\n", elapsed_time_ns / 1e9);
 
+	// Save to CSV if requested
+	if (save_csv) {
+		FILE *results_file;
+		// Create the directory if it does not exist
+		system("mkdir -p data 2>/dev/null");
+		results_file = fopen("data/serial_results.csv", "a");
+		if (results_file != NULL) {
+			fseek(results_file, 0, SEEK_END);
+			long size = ftell(results_file);
+			if (size == 0) {
+				fprintf(results_file, "XDim,YDim,Iterations,ExecutionTime_s\n");
+			}
+			fprintf(results_file, "%d,%d,%d,%.6f\n", S[0], S[1], Niterations, elapsed_time_ns / 1e9);
+			fclose(results_file);
+		} else {
+			printf("Error opening CSV file for saving timings.\n");
+		}
+	}
+
 	return 0;
 }
 
@@ -138,7 +164,8 @@ int initialize (
 					double  *energy_per_source,   // how much heat per source
 					double **planes,
 					int     *output_energy_at_steps,
-					int     *injection_frequency
+					int     *injection_frequency,
+					int     *save_csv_flag
 				) {
 
 	//? ························ set default values ························
@@ -151,12 +178,13 @@ int initialize (
 	*output_energy_at_steps = 0;
 	*energy_per_source 		= 1.0;
 	*injection_frequency 	= *Niterations;
+	*save_csv_flag = 0; // Default to 0
 
 	double freq = 0;
 	
 	//? ····················· process the commadn line ·····················
     int opt;
-    while((opt = getopt(argc, argv, ":x:y:e:E:f:n:p:o:v:h")) != -1) {
+    while((opt = getopt(argc, argv, ":x:y:e:E:f:n:p:o:v:sh")) != -1) {
 	switch( opt ) {
 		case 'x': S[_x_] = (uint)atoi(optarg);
 			break;
@@ -185,16 +213,19 @@ int initialize (
 		case 'v': verbose = atoi(optarg);
 			break;
 			
+	  	case 's': *save_csv_flag = 1; break;
+
 	  	case 'h': printf( "valid options are ( values btw [] are the default values ):\n"
 			"-x    x size of the plate [1000]\n"
 			"-y    y size of the plate [1000]\n"
 			"-e    how many energy sources on the plate [4]\n"
-			"-E    how many energy sources on the plate [1.0]\n"
+			"-E    how much energy per source [1.0]\n"
 			"-f    the frequency of energy injection [0.0]\n"
 			"-n    how many iterations [100]\n"
-			"-p    whether periodic boundaries applies  [0 = false]\n"
-			"-o    whether to print the energy budgest at every step [0 = false]\n"
+			"-p    whether periodic boundaries apply  [0 = false]\n"
+			"-o    whether to print the energy budget at every step [0 = false]\n"
 			"-v    verbose level [0]\n"
+			"-s    save execution times to data/serial_results.csv [disabled by default]\n"
 			);
 	    	break;
 	    

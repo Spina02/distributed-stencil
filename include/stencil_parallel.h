@@ -161,10 +161,8 @@ inline int update_plane (
     
             // if there is only a row of tasks, the periodicity on the Y axis is local
             if ( N[_y_] == 1 ) {
-                // copy the values of the first row to the bottom ghost row (ysize+1)
-                // and the values of the last row to the top ghost row (0)
                 for (i = 1; i <= xsize; i++ ) {
-                    new[ IDX( i, 0 ) ]       = new[ IDX(i, ysize) ];
+                    new[ IDX( i, 0 ) ]      = new[ IDX(i, ysize) ];
                     new[ IDX( i, ysize+1) ] = new[ IDX(i, 1) ];
                 }
             }
@@ -198,7 +196,7 @@ inline int update_internal(
         
         uint i, j;
 
-        #pragma omp parallel for simd schedule(static)
+        #pragma omp parallel for schedule(static)
         for (j = 2; j <= ysize-1; j++) {
             for ( i = 2; i <= xsize-1; i++)
                 {
@@ -240,7 +238,8 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
     uint i, j;
     
     // update the top and bottom borders
-    for ( i = 1; i <= xsize; i++ ) {
+    #pragma omp parallel for schedule(static)
+    for ( i = 2; i <= xsize-1; i++ ) { // exclude corners
         center = old[ IDX(i,1) ];
         neighbors = old[IDX(i-1, 1)] + old[IDX(i+1, 1)] + old[IDX(i, 0)] + old[IDX(i, 2)];
         new[ IDX(i,1) ] = center * alpha + neighbors * constant;
@@ -251,6 +250,7 @@ inline int update_border( const int periodic, const vec2_t N, const plane_t *old
     }
 
     // update the left and right borders
+    #pragma omp parallel for schedule(static)
     for ( j = 1; j <= ysize; j++ ) {
         center = old[ IDX(1,j) ];
         neighbors = old[IDX(0, j)] + old[IDX(2, j)] + old[IDX(1, j-1)] + old[IDX(1, j+1)];
