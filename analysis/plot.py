@@ -41,13 +41,13 @@ def plot_strong_speedup(data, output_folder):
         baseline_time = grouped.iloc[0]
         speedup = baseline_time / grouped.values
         ideal_speedup = nodes / nodes[0]
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(nodes, speedup, color=strong_color, marker='o', linewidth=2.5, markersize=8, label='Measured Speedup')  # Azzurro
         plt.plot(nodes, ideal_speedup, color=ideal_color, linestyle='--', linewidth=2, label='Ideal Speedup')  # Giallo limone
-        plt.xlabel('Number of nodes')
-        plt.ylabel('Speedup')
-        plt.title('Strong Scaling Speedup (as a function of nodes)')
-        plt.legend()
+        plt.xlabel('Number of nodes', fontsize=18)
+        plt.ylabel('Speedup', fontsize=18)
+        plt.title('Strong Scaling Speedup (as a function of nodes)', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(nodes)
         plt.ylim(bottom=0)
@@ -63,13 +63,13 @@ def plot_omp_speedup(data, output_folder):
         baseline_time = grouped.iloc[0]
         speedup = baseline_time / grouped.values
         ideal_speedup = threads
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(threads, speedup, color=omp_color, marker='o', linewidth=2.5, markersize=8, label='Measured Speedup')  # Verde acqua
         plt.plot(threads, ideal_speedup, color=ideal_color, linestyle='--', linewidth=2, label='Ideal Speedup')  # Giallo limone
-        plt.xlabel('Number of Threads')
-        plt.ylabel('Speedup')
-        plt.title('OpenMP Thread Scaling Speedup')
-        plt.legend()
+        plt.xlabel('Number of Threads', fontsize=18)
+        plt.ylabel('Speedup', fontsize=18)
+        plt.title('OpenMP Thread Scaling Speedup', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(threads)
         plt.ylim(bottom=0)
@@ -85,13 +85,13 @@ def plot_strong_efficiency(data, output_folder):
         baseline_time = grouped.iloc[0]
         speedup = baseline_time / grouped.values
         efficiency = speedup / (nodes / nodes[0])
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(nodes, efficiency, color=strong_color, marker='o', linewidth=2.5, markersize=8, label='Measured Efficiency')  # Turchese
         plt.axhline(y=1.0, color=ideal_color, linestyle='--', linewidth=2, label='Ideal Efficiency')  # Giallo limone
-        plt.xlabel('Number of nodes')
-        plt.ylabel('Efficiency')
-        plt.title('Strong Scaling Efficiency (as a function of nodes)')
-        plt.legend()
+        plt.xlabel('Number of nodes', fontsize=18)
+        plt.ylabel('Efficiency', fontsize=18)
+        plt.title('Strong Scaling Efficiency (as a function of nodes)', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(nodes)
         plt.ylim(0, 1.2)
@@ -107,13 +107,13 @@ def plot_omp_efficiency(data, output_folder):
         baseline_time = grouped.iloc[0]
         speedup = baseline_time / grouped.values
         efficiency = speedup / threads
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(threads, efficiency, color=omp_color, marker='o', linewidth=2.5, markersize=8, label='Measured Efficiency')  # Verde lime
         plt.axhline(y=1.0, color=ideal_color, linestyle='--', linewidth=2, label='Ideal Efficiency')  # Giallo limone
-        plt.xlabel('Number of Threads')
-        plt.ylabel('Efficiency')
-        plt.title('OpenMP Thread Scaling Efficiency')
-        plt.legend()
+        plt.xlabel('Number of Threads', fontsize=18)
+        plt.ylabel('Efficiency', fontsize=18)
+        plt.title('OpenMP Thread Scaling Efficiency', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(threads)
         plt.ylim(0, 1.2)
@@ -128,13 +128,13 @@ def plot_weak_efficiency(data, output_folder):
         nodes = grouped.index.values
         baseline_time = grouped.iloc[0]
         efficiency = baseline_time / grouped.values
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(nodes, efficiency, color=weak_color, marker='o', linewidth=2.5, markersize=8, label='Measured Efficiency')  # Corallo
         plt.axhline(y=1.0, color=ideal_color, linestyle='--', linewidth=2, label='Ideal Efficiency')  # Giallo limone
-        plt.xlabel('Number of Nodes')
-        plt.ylabel('Efficiency')
-        plt.title('Weak Scaling Efficiency')
-        plt.legend()
+        plt.xlabel('Number of Nodes', fontsize=18)
+        plt.ylabel('Efficiency', fontsize=18)
+        plt.title('Weak Scaling Efficiency', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(nodes)
         plt.ylim(0, 1.2)
@@ -147,14 +147,14 @@ def plot_strong_time(data, output_folder):
         strong_data = data['strong']
         grouped = strong_data.groupby('Nodes').mean(numeric_only=True).sort_index()
         nodes = grouped.index
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(nodes, grouped['ComputationTime'], color=computation_color, marker='s', linewidth=2, markersize=6, label='Computation Time')  # Azzurro
         plt.plot(nodes, grouped['CommunicationTime'], color=communication_color, marker='^', linewidth=2, markersize=6, label='Communication Time')  # Verde acqua
         plt.plot(nodes, grouped['TotalTime'], color=total_color, marker='o', linewidth=2, markersize=8, label='Total Time')  # Blu cielo
-        plt.xlabel('Number of nodes')
-        plt.ylabel('Time (seconds)')
-        plt.title('Strong Scaling - Execution Time (as a function of nodes)')
-        plt.legend()
+        plt.xlabel('Number of nodes', fontsize=18)
+        plt.ylabel('Time (seconds)', fontsize=18)
+        plt.title('Strong Scaling - Execution Time (as a function of nodes)', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(nodes)
         plt.tight_layout(pad=2.0)
@@ -166,14 +166,14 @@ def plot_omp_time(data, output_folder):
         omp_data = data['omp']
         grouped = omp_data.groupby('ThreadsPerTask').mean(numeric_only=True).sort_index()
         threads = grouped.index
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(threads, grouped['ComputationTime'], color=computation_color, marker='s', linewidth=2, markersize=6, label='Computation Time')  # Azzurro
         plt.plot(threads, grouped['CommunicationTime'], color=communication_color, marker='^', linewidth=2, markersize=6, label='Communication Time')  # Verde acqua
         plt.plot(threads, grouped['TotalTime'], color=total_color, marker='o', linewidth=2, markersize=8, label='Total Time')  # Blu cielo
-        plt.xlabel('Number of Threads')
-        plt.ylabel('Time (seconds)')
-        plt.title('OpenMP Scaling - Execution Time')
-        plt.legend()
+        plt.xlabel('Number of Threads', fontsize=18)
+        plt.ylabel('Time (seconds)', fontsize=18)
+        plt.title('OpenMP Scaling - Execution Time', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(threads)
         plt.tight_layout(pad=2.0)
@@ -185,25 +185,57 @@ def plot_weak_time(data, output_folder):
         weak_data = data['weak']
         grouped = weak_data.groupby('Nodes').mean(numeric_only=True).sort_index()
         nodes = grouped.index
-        plt.figure(figsize=(9, 7))
+        plt.figure(figsize=(9,7))
         plt.plot(nodes, grouped['ComputationTime'], color=computation_color, marker='s', linewidth=2, markersize=6, label='Computation Time')  # Azzurro
         plt.plot(nodes, grouped['CommunicationTime'], color=communication_color, marker='^', linewidth=2, markersize=6, label='Communication Time')  # Verde acqua
         plt.plot(nodes, grouped['TotalTime'], color=total_color, marker='o', linewidth=2, markersize=8, label='Total Time')  # Blu cielo
-        plt.xlabel('Number of Nodes')
-        plt.ylabel('Time (seconds)')
-        plt.title('Weak Scaling - Execution Time')
-        plt.legend()
+        plt.xlabel('Number of Nodes', fontsize=18)
+        plt.ylabel('Time (seconds)', fontsize=18)
+        plt.title('Weak Scaling - Execution Time', fontsize=24)
+        plt.legend(fontsize=18)
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.xticks(nodes)
         plt.tight_layout(pad=2.0)
         plt.savefig(os.path.join(output_folder, 'time_weak.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
+def plot_strong_overlap_comparison(overlap_path, no_overlap_path, output_folder):
+    """Plot TotalTime vs Nodes for strong scaling with and without overlap."""
+    import pandas as pd
+    import os
+    import matplotlib.pyplot as plt
+    # Read both CSVs
+    df_overlap = pd.read_csv(overlap_path)
+    df_no_overlap = pd.read_csv(no_overlap_path)
+    # Ensure numeric
+    for df in [df_overlap, df_no_overlap]:
+        for col in ['Nodes', 'TotalTime']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+    # Group by Nodes and average if needed
+    overlap_grouped = df_overlap.groupby('Nodes')['TotalTime'].mean().sort_index()
+    no_overlap_grouped = df_no_overlap.groupby('Nodes')['TotalTime'].mean().sort_index()
+    nodes = sorted(set(overlap_grouped.index).intersection(no_overlap_grouped.index))
+    plt.figure(figsize=(8, 6))
+    plt.plot(nodes, [overlap_grouped[n] for n in nodes], marker='o', linewidth=2.5, label='With Overlap')
+    plt.plot(nodes, [no_overlap_grouped[n] for n in nodes], marker='o', linewidth=2.5, label='No Overlap')
+    plt.xlabel('Number of Nodes', fontsize=18)
+    plt.ylabel('Total Execution Time (s)', fontsize=18)
+    plt.title('Strong Scaling: Overlap vs No Overlap', fontsize=24)
+    plt.legend(fontsize=18)
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.xticks(nodes)
+    plt.tight_layout(pad=2.0)
+    plt.savefig(os.path.join(output_folder, 'strong_overlap_comparison.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+
 def main():
     parser = argparse.ArgumentParser(description='Plot the results of the parallel stencil code')
     parser.add_argument('--data-folder', type=str, default='data', help='Path to the data folder')
     parser.add_argument('--output-folder', type=str, default='plots', help='Path to the output folder')
-    parser.add_argument('--plot-type', type=str, nargs='+', default=['all'], help='Type(s) of plot to generate', choices=['speedup', 'efficiency', 'time', 'all'])
+    parser.add_argument('--plot-type', type=str, nargs='+', default=['all'], help='Type(s) of plot to generate', choices=['speedup', 'efficiency', 'time', 'overlap', 'all'])
+    parser.add_argument('--strong-overlap', type=str, default='data/strong_results', help='Path to strong_results.csv (with overlap)')
+    parser.add_argument('--strong-no-overlap', type=str, default='data/strong_results_no_overlap.csv', help='Path to strong_results_no_overlap.csv (no overlap)')
     args = parser.parse_args()
     os.makedirs(args.output_folder, exist_ok=True)
     plot_types = args.plot_type
@@ -227,6 +259,12 @@ def main():
         plot_omp_time(data, args.output_folder)
         print("Generating weak time plot...")
         plot_weak_time(data, args.output_folder)
+    if 'all' in plot_types or 'overlap' in plot_types:
+        if args.strong_overlap and args.strong_no_overlap:
+            print("Generating strong overlap comparison plot...")
+            plot_strong_overlap_comparison(args.strong_overlap, args.strong_no_overlap, args.output_folder)
+        else:
+            print("Error: --strong-overlap and --strong-no-overlap must be provided for overlap plot.")
 
 if __name__ == "__main__":
     main()

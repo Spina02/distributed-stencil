@@ -1,0 +1,6 @@
+TestType,Nodes,TotalTasks,TasksPerNode,ThreadsPerTask,XDim,YDim,Iterations,TotalTime,ComputationTime,CommunicationTime
+strong,4,32,8,14,16384,16384,500,5.9990,5.9702,0.6439
+strong,16,128,8,14,16384,16384,500,1.3519,1.3083,0.1029
+strong,1,8,8,14,16384,16384,500,23.2917,23.2193,1.4274
+strong,8,64,8,14,16384,16384,500,2.7447,2.7101,0.1203
+strong,2,16,8,14,16384,16384,500,11.1794,11.1474,0.4103

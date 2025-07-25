@@ -2,6 +2,8 @@
 CC = gcc
 MPICC = mpicc
 
+ARCH ?= native
+
 # Directories
 SRCDIR = src
 INCDIR = include
@@ -20,18 +22,10 @@ PEDANTIC_OVERRIDES = -Wno-pointer-sign
 MATH_LIBS = -lm
 
 # Optimization flags
-OPT_CFLAGS = -Ofast -flto -fopenmp
-
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Linux)
-	ARCH := native
-else
-	ARCH := icelake-server
-endif
-OPT_CFLAGS += -march=$(ARCH)
+OPT_CFLAGS = -Ofast -flto -fopenmp -march=$(ARCH)
 
 # Debug flags
-DEBUG_CFLAGS = -g -O0 -DDEBUG
+DEBUG_CFLAGS = -g -O2 -DDEBUG -fopenmp # -O3 needed for inline functions
 
 # Release flags
 RELEASE_CFLAGS = $(OPT_CFLAGS)
